@@ -1,6 +1,6 @@
 # `mdx` to Markdown
 
-`mdx2md.py` is a Python script that converts an mdx document in the Agora docs repository to a single markdown (.md) file. When you run the script, it does the following:
+`mdx2md.py` is a Python script that converts an mdx document in the Agora docs repository to a single markdown `.md` file by resolving all its dependencies. When you run the script, it does the following:
 
 * Loads global variables into a dictionary
 * Creates product and platform dictionaries to resolve `<Vpl>` and `<Vpd>` tags

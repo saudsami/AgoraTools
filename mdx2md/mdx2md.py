@@ -1,6 +1,27 @@
 import re #Regular expressions
 import os #Operating system
 import shutil #Copy images
+import argparse
+
+'''
+# Create an ArgumentParser object
+parser = argparse.ArgumentParser()
+
+# Add named arguments
+parser.add_argument('--platform', type=str, help='Agora product')
+parser.add_argument('--product', type=str, help='Target platform android|electron|flutter|ios|macos|react-native|unity|web|windows')
+parser.add_argument('--mdxPath', type=str, help='The path to the mdx document')
+
+# Parse the command-line arguments
+args = parser.parse_args()
+
+# Access the values of the named arguments
+platform = args.platform
+product = args.product
+
+# Print the values of the named arguments
+print(platform)
+'''
 
 platform = 'android'
 product = 'video-calling'
