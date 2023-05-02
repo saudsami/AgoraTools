@@ -55,7 +55,7 @@ Take the following steps:
 
     The script creates an `output` folder in your working directory.
 
-1. Open the `output` folder. The markdown file has the same name as the input `.mdx` file with a `.md` extension. The `images` folder contains copies of all the images from the repository that are included in the document.
+1. Open the `output` folder. The markdown file has the same name as the input `.mdx` file with an `.md` extension. The `images` folder contains copies of all the images from the repository that are included in the document.
 
 ## Reference
 
@@ -63,18 +63,18 @@ This section provides additional content that completes the information in this 
 
 ### Export to PDF
 
-You can convert the `.md` file generated using `mdx2md.py` script to a PDF document using and markdown to PDF converter. If you use VS Code:
+You can convert the `.md` file generated using `mdx2md.py` script to a PDF document using any markdown to PDF converter. If you use VS Code:
 
 1. Install the [Markdown PDF](https://marketplace.visualstudio.com/items?itemName=yzane.markdown-pdf) extension.
 
 2. Open the `.md` file in VS code.
 
-2. Press `CTRL + SHIFT + P`, type "Export (pdf)" and press enter. A PDF file is created in the same folder.
+2. Press `CTRL + SHIFT + p`, type "Export (pdf)" and press enter. A PDF file is created in the same folder as the markdown file.
 
 ### Known Issues
 The script has the following limitations:
 
-* The script does not correctly process nested `<PlatformWrapper>` and `<ProductWrapper>` tags. One type of tag inside the other is fine but same type of tags should not be nested. To avoid nesting use multiple attribute values in the same tag for example:
+* The script does not correctly process nested `<PlatformWrapper>` and `<ProductWrapper>` tags. One type of tag inside the other is fine but same type of tags should not be nested. To avoid nesting, use multiple attribute values in the same tag for example:
 
     ```xml
     <PlatformWrapper notAllowed ="{['android', 'flutter']}">
