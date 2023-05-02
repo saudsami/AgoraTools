@@ -3,13 +3,13 @@ import os #Operating system
 import shutil #Copy images
 import argparse
 
-'''
+
 # Create an ArgumentParser object
 parser = argparse.ArgumentParser()
 
 # Add named arguments
 parser.add_argument('--platform', type=str, help='Agora product')
-parser.add_argument('--product', type=str, help='Target platform android|electron|flutter|ios|macos|react-native|unity|web|windows')
+parser.add_argument('--product', type=str, help='Target platform: android|electron|flutter|ios|macos|react-native|unity|web|windows')
 parser.add_argument('--mdxPath', type=str, help='The path to the mdx document')
 
 # Parse the command-line arguments
@@ -21,7 +21,8 @@ product = args.product
 
 # Print the values of the named arguments
 print(platform)
-'''
+print(product)
+
 
 platform = 'android'
 product = 'video-calling'

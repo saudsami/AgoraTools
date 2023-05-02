@@ -41,3 +41,22 @@ Take the following steps:
     ```
     repoPath = 'C:/Users/saud/Git/AgoraDocsPrivate/Docs'
     ```
+
+1. Open the output folder. The markdown file has the same name as the input `.mdx` file with a `.md` extension. The `images` folder contains copies of all the images from the repository that are included in the document.
+
+## Reference
+
+This section provides additional content that completes the information in this document.
+
+### Known Issues
+The script has the following limitations:
+
+* The script does not correctly process nested `<PlatformWrapper>` and `<ProductWrapper>` tags. One type of tag inside the other is fine but same type of tags should not be nested. To avoid nesting use multiple attribute values in the same tag for example:
+
+    ```xml
+    <PlatformWrapper notAllowed ="{['android', 'flutter']}">
+    // some non-android, non-flutter stuff
+    </PlatformWrapper>
+    ```
+
+* If the content inside `<PlatformWrapper>` and `<ProductWrapper>` tags is unnecessarily indented, the indenting is reproduced in the markdown file which prevents code blocks from being recognized and properly highlighted.
