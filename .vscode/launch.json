@@ -9,6 +9,7 @@
             "type": "python",
             "request": "launch",
             "program": "${file}",
+            "args": ["--platform", "android", "--mdxPath", "C:\\Users\\saud\\Git\\AgoraDocsPrivate\\Docs\\docs\\interactive-live-streaming\\get-started\\get-started-sdk.mdx"],
             "console": "integratedTerminal",
             "justMyCode": true
         }

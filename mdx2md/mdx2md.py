@@ -2,47 +2,48 @@ import re #Regular expressions
 import os #Operating system
 import shutil #Copy images
 import argparse
+import sys
 
+# Default value
+platform = 'android'
 
 # Create an ArgumentParser object
 parser = argparse.ArgumentParser()
-
 # Add named arguments
-parser.add_argument('--platform', type=str, help='Agora product')
+parser.add_argument('--platform', type=str, help='Agora product: video-calling|interactive-live-streaming|etc.')
 parser.add_argument('--product', type=str, help='Target platform: android|electron|flutter|ios|macos|react-native|unity|web|windows')
-parser.add_argument('--mdxPath', type=str, help='The path to the mdx document')
-
-# Parse the command-line arguments
-args = parser.parse_args()
+parser.add_argument('--mdxPath', type=str, help='The absolute path to the mdx file')
 
 # Access the values of the named arguments
-platform = args.platform
+args = parser.parse_args()
+platform = args.platform if args.platform is not None else platform
 product = args.product
+mdxPath = args.mdxPath
 
-# Print the values of the named arguments
-print(platform)
-print(product)
+# Get the Docs repository path
+if mdxPath is None:
+    print('usage: mdx2md.py [-h] [--platform PLATFORM] [--product PRODUCT] [--mdxPath MDXPATH]')
+    sys.exit(-1)
+docs_index = mdxPath.find(os.path.sep + 'docs')
+if docs_index >= 0:
+    repoPath = mdxPath[:docs_index]
+else:
+    print('Invalid mdx path!')
+    sys.exit(-2)
 
-
-platform = 'android'
-product = 'video-calling'
-# Relative to the 'docs' directory
-inputRelPath = '/video-calling/get-started/get-started-sdk.mdx' 
-
-#repoPath = 'C:/Users/saud/Git/AgoraDocsPrivate/Docs'
-repoPath = 'C:/Git/AgoraDocs/PrivateDocs/Docs'
 siteBaseUrl = "https://docs.agora.io/en"
 docsPath = repoPath + "/docs"
 assetsPath = docsPath + "/assets"
-inputPath = docsPath + inputRelPath
-inputDocDir = os.path.dirname(inputRelPath)
 
-# '/video-calling/get-started/get-started-sdk.mdx'
-# '/video-calling/develop/ensure-channel-quality.mdx' 
-# '/shared/video-sdk/develop/ensure-channel-quality/project-implementation/android.mdx'
-# '/shared/video-sdk/_get-started-sdk.mdx'
-# '/shared/video-sdk/get-started/get-started-sdk/project-implementation/index.mdx'
-# '/shared/video-sdk/get-started/get-started-sdk/project-implementation/android.mdx'
+if product is None:
+    # Get the product name from the path
+    dirname = os.path.dirname(mdxPath)
+    # Split the directory path into parts
+    parts = dirname.split(os.path.sep)
+    # Find the index of the "docs" folder
+    docs_index = parts.index("docs")
+    # product name is the name of the docs sub-folder
+    product = parts[docs_index + 1]
 
 # ----- Helper functions -------
 
@@ -98,8 +99,8 @@ def resolve_imports(mdxFilePath):
     base_dir = os.path.dirname(mdxFilePath)
     with open(rf'{mdxFilePath}', 'r', encoding='utf-8') as file:
         mdxFileContents = file.read()
-        mdxFileContents = resolve_tags(mdxFileContents, 'PlatformWrapper', platform)
-        mdxFileContents = resolve_tags(mdxFileContents, 'ProductWrapper', product)
+        mdxFileContents = resolve_tags(mdxFileContents, 'PlatformWrapper', 'platform', platform)
+        mdxFileContents = resolve_tags(mdxFileContents, 'ProductWrapper', 'product',  product)
 
     # Read the import statements
     matches = re.findall(r'import\s+(\w+?)\s+from\s+\'(.+?md[x]*)\';?\n*', mdxFileContents)
@@ -118,8 +119,8 @@ def resolve_imports(mdxFilePath):
 
         tag_content = resolve_imports(filepath)
         # Resolve PlatformWrapper and ProductWrapper tags
-        tag_content = resolve_tags(tag_content, 'PlatformWrapper', platform)
-        tag_content = resolve_tags(tag_content, 'ProductWrapper', product)
+        tag_content = resolve_tags(tag_content, 'PlatformWrapper', 'platform', platform)
+        tag_content = resolve_tags(tag_content, 'ProductWrapper', 'product', product)
 
         rgx = r'<{}[\s\S]*?/>'.format(tag)
         mdxFileContents = re.sub(rgx, lambda match: tag_content, mdxFileContents)
@@ -128,13 +129,16 @@ def resolve_imports(mdxFilePath):
 
 # Resolves all ProductWrapper and PlatformWrapper tags keeps contents where 
 # the attribute value is present in the opening tag and discards irrelevant content.
-def resolve_tags(text, tagName, attributeValue):
+def resolve_tags(text, tagName, attributeName, attributeValue):
     # pattern to match the <PlatformWrapper> block
     regex = r'^.*\<{}\s([\s\S]*?)>\n*([\s\S]*?)</{}>'.format(tagName, tagName)
     pattern = re.compile(regex, re.MULTILINE)
 
-    # replace the matches based on platform value
-    text = pattern.sub(lambda m: m.group(2) if attributeValue in m.group(1) else '', text)
+    # Replace the matches based on platform value
+    # text = pattern.sub(lambda m: m.group(2) if attributeValue in m.group(1) else '', text)
+    text = pattern.sub(lambda m: m.group(2) if ((attributeName in m.group(1) and attributeValue in m.group(
+        1)) or ('notAllowed' in m.group(1) and attributeValue not in m.group(1))) else '', text)
+
     return text
 
 def resolve_header(text):
@@ -203,6 +207,7 @@ def resolve_hyperlinks(text, base_folder, http_url):
 
         # Create the new URL by adding the HTTP prefix
         new_url = '{}/{}'.format(http_url, rel_path.replace('\\','/'))
+        new_url= new_url.replace('//','/')
 
         # Replace the link in the text
         text = text.replace(link, new_url)
@@ -213,7 +218,7 @@ def resolve_hyperlinks(text, base_folder, http_url):
 # -----Main------
 
 # Read the input file
-with open(inputPath, 'r', encoding='utf-8') as file:
+with open(mdxPath, 'r', encoding='utf-8') as file:
     contents = file.read()
 
 # Load global variables into a dictionary
@@ -226,7 +231,7 @@ platformDict = createDictionary(docsPath + '/shared/variables/platform.js')
 
 # Resolve import statements 
 # Also resolves PlatformWrapper and ProductWrapper tags
-mdxContents = resolve_imports(inputPath)
+mdxContents = resolve_imports(mdxPath)
 
 # Replace global variables <Vg k="KEY" /> using the dictionary
 regex_pattern = r'<Vg\s+k\s*=\s*"(\w+)"\s*\/?>'
@@ -246,13 +251,13 @@ mdxContents = resolve_images(mdxContents)
 
 # Update hyperlinks
 mdxContents = resolve_link_tags(mdxContents)
-docFolder = os.path.dirname(inputPath)
+docFolder = os.path.dirname(mdxPath)
 mdxContents = resolve_hyperlinks(mdxContents, docFolder, siteBaseUrl)
 
 # Write the modified contents to a new md file
 if not os.path.exists('./output'):
     os.makedirs('./output')
-outputFilename = os.path.basename(inputPath)
+outputFilename = os.path.basename(mdxPath)
 outputFilename = os.path.splitext(outputFilename)[0] + '.md'
 with open('./output/' + outputFilename, 'w', encoding='utf-8') as file:
     file.write(mdxContents)

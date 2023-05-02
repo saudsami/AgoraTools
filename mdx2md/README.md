@@ -35,18 +35,41 @@ git clone https://github.com/saudsami/AgoraTools
 
 Take the following steps:
 
-1. Update the `repoPath` to point to the `Docs` directory in the cloned repository. 
-    For example, 
+1. Open a terminal window and navigate to the `/AgoraTools/mdx2md` folder.
+
+1. In the terminal window execute the following command:
     
-    ```
-    repoPath = 'C:/Users/saud/Git/AgoraDocsPrivate/Docs'
+    ```bash
+    python mdx2md.py [--mdxPath MDXPATH] [--platform PLATFORM] [--product PRODUCT]
     ```
 
-1. Open the output folder. The markdown file has the same name as the input `.mdx` file with a `.md` extension. The `images` folder contains copies of all the images from the repository that are included in the document.
+    * `mdxPath`: The absolute path to the `.mdx` file in `docs` repository.
+    * `platform`: The platform for which you want to generate the document. Default is `android`
+    * `product`: (Optional) The product for which you want to generate the document. If omitted, the product name is automatically interpreted from the `mdxPath`.
+
+    For example:
+
+    ```bash
+    python mdx2md.py --mdxPath C:\Git\AgoraDocsPrivate\Docs\docs\voice-calling\get-started\get-started-sdk.mdx --platform flutter
+    ```
+
+    The script creates an `output` folder in your working directory.
+
+1. Open the `output` folder. The markdown file has the same name as the input `.mdx` file with a `.md` extension. The `images` folder contains copies of all the images from the repository that are included in the document.
 
 ## Reference
 
 This section provides additional content that completes the information in this document.
+
+### Export to PDF
+
+You can convert the `.md` file generated using `mdx2md.py` script to a PDF document using and markdown to PDF converter. If you use VS Code:
+
+1. Install the [Markdown PDF](https://marketplace.visualstudio.com/items?itemName=yzane.markdown-pdf) extension.
+
+2. Open the `.md` file in VS code.
+
+2. Press `CTRL + SHIFT + P`, type "Export (pdf)" and press enter. A PDF file is created in the same folder.
 
 ### Known Issues
 The script has the following limitations:
