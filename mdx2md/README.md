@@ -6,7 +6,7 @@ When you run the script, it does the following:
 
 * Loads global variables into a dictionary.
 * Creates product and platform dictionaries to resolve `<Vpl>` and `<Vpd>` tags.
-* Reads the `.mdx` file and recursively resolves all the import statements .
+* Reads the `.mdx` file and recursively resolves all the import statements.
 * Resolves `<PlatformWrapper>` tags to filter content for the selected platform.
 * Resolves `<ProductWrapper>` tags to filter content for the selected product.
 * Replaces global variables `<Vg k="KEY" />` with values.
@@ -81,9 +81,9 @@ The script has the following limitations:
 * The script does not correctly process nested `<PlatformWrapper>` and `<ProductWrapper>` tags. `<PlatformWrapper>` tags inside `<ProductWrapper>` or visa versa are processed correctly but same type of nested tags produce unexpected results. To avoid nesting tags in the documentation, use a JSON array with multiple values. For example:
 
     ```xml
-    <PlatformWrapper notAllowed ="{['android', 'flutter']}">
+    <PlatformWrapper notAllowed="{['android', 'flutter']}">
     // some non-android, non-flutter stuff
     </PlatformWrapper>
     ```
 
-* If the content inside `<PlatformWrapper>` and `<ProductWrapper>` tags is unnecessarily indented, the indenting is reproduced in the markdown file which prevents code blocks from being recognized and properly highlighted.
+* If the content inside `<PlatformWrapper>` and `<ProductWrapper>` tags is unnecessarily indented, the indenting is reproduced in the markdown file which prevents code blocks from being interpreted and properly highlighted.
