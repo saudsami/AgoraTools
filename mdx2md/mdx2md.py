@@ -127,61 +127,80 @@ def resolve_all_platform_tags(text, platform):
     """
     Resolve all PlatformWrapper tags in the text for the given platform.
     This handles both standard and notAllowed attributes.
+    Properly handles nested PlatformWrapper tags.
     """
     
     # Keep processing until no more PlatformWrapper tags are found
-    while '<PlatformWrapper' in text:
-        # Pattern to match PlatformWrapper tags
-        pattern = re.compile(
-            r'<PlatformWrapper\s+([^>]*?)>(.*?)</PlatformWrapper>',
-            re.MULTILINE | re.DOTALL
-        )
+    max_iterations = 100  # Prevent infinite loops
+    iteration = 0
+    
+    while '<PlatformWrapper' in text and iteration < max_iterations:
+        iteration += 1
         
-        def process_wrapper(match):
-            attributes = match.group(1)
-            content = match.group(2)
-            
-            # Check for platform attribute
-            platform_match = re.search(r'platform=["\']([^"\']+)["\']', attributes)
-            notallowed_match = re.search(r'notAllowed=["\']([^"\']+)["\']', attributes)
-            
-            if platform_match:
-                # Parse comma-separated or array-like values
-                platforms_str = platform_match.group(1)
-                # Handle array notation if present [flutter, android] -> flutter, android
-                platforms_str = platforms_str.strip('[]').replace(' ', '')
-                allowed_platforms = [p.strip() for p in platforms_str.split(',')]
-                
-                if platform in allowed_platforms:
-                    return content  # Include content without wrapper
-                else:
-                    return ''  # Remove everything
-                    
-            elif notallowed_match:
-                # Parse notAllowed platforms
-                excluded_str = notallowed_match.group(1)
-                excluded_str = excluded_str.strip('[]').replace(' ', '')
-                excluded_platforms = [p.strip() for p in excluded_str.split(',')]
-                
-                if platform not in excluded_platforms:
-                    return content  # Include content without wrapper
-                else:
-                    return ''  # Remove everything
-                    
-            else:
-                # No recognized attributes, remove the wrapper
-                return ''
-        
-        # Apply replacements
-        new_text = pattern.sub(process_wrapper, text)
-        
-        # If no changes were made, break to avoid infinite loop
-        if new_text == text:
-            # Clean up any remaining unmatched closing tags
-            text = re.sub(r'</PlatformWrapper>', '', text)
+        # Find the first opening PlatformWrapper tag
+        start_match = re.search(r'<PlatformWrapper\s+([^>]*?)>', text)
+        if not start_match:
             break
             
-        text = new_text
+        start_pos = start_match.start()
+        end_pos = start_match.end()
+        attributes = start_match.group(1)
+        
+        # Now find the matching closing tag, accounting for nested tags
+        depth = 1
+        search_pos = end_pos
+        
+        while depth > 0 and search_pos < len(text):
+            # Look for the next opening or closing tag
+            opening = text.find('<PlatformWrapper', search_pos)
+            closing = text.find('</PlatformWrapper>', search_pos)
+            
+            if closing == -1:
+                # No closing tag found, malformed structure
+                print(f"Warning: Unclosed PlatformWrapper tag found")
+                text = text[:start_pos] + text[end_pos:]
+                break
+            
+            if opening != -1 and opening < closing:
+                # Found another opening tag before the closing tag (nested)
+                depth += 1
+                search_pos = opening + 1
+            else:
+                # Found a closing tag
+                depth -= 1
+                if depth == 0:
+                    # This is our matching closing tag
+                    closing_end = closing + len('</PlatformWrapper>')
+                    content = text[end_pos:closing]
+                    
+                    # Determine if we should include this content
+                    platform_match = re.search(r'platform\s*=\s*["\']([^"\']+)["\']', attributes)
+                    notallowed_match = re.search(r'notAllowed\s*=\s*["\']([^"\']+)["\']', attributes)
+                    
+                    include_content = False
+                    
+                    if platform_match:
+                        platforms_str = platform_match.group(1)
+                        platforms_str = platforms_str.strip('[]').replace(' ', '')
+                        allowed_platforms = [p.strip() for p in platforms_str.split(',')]
+                        include_content = platform in allowed_platforms
+                    elif notallowed_match:
+                        excluded_str = notallowed_match.group(1)
+                        excluded_str = excluded_str.strip('[]').replace(' ', '')
+                        excluded_platforms = [p.strip() for p in excluded_str.split(',')]
+                        include_content = platform not in excluded_platforms
+                    
+                    # Replace the entire wrapper with content or nothing
+                    if include_content:
+                        # Process nested PlatformWrapper tags in the content first
+                        content = resolve_all_platform_tags(content, platform)
+                        text = text[:start_pos] + content + text[closing_end:]
+                    else:
+                        text = text[:start_pos] + text[closing_end:]
+                    
+                    break
+                else:
+                    search_pos = closing + 1
     
     # Final cleanup of any orphaned closing tags
     text = re.sub(r'</PlatformWrapper>', '', text)
@@ -193,61 +212,80 @@ def resolve_all_product_tags(text, product):
     """
     Resolve all ProductWrapper tags in the text for the given product.
     This handles both standard and notAllowed attributes.
+    Properly handles nested ProductWrapper tags.
     """
     
     # Keep processing until no more ProductWrapper tags are found
-    while '<ProductWrapper' in text:
-        # Pattern to match ProductWrapper tags
-        pattern = re.compile(
-            r'<ProductWrapper\s+([^>]*?)>(.*?)</ProductWrapper>',
-            re.MULTILINE | re.DOTALL
-        )
+    max_iterations = 100  # Prevent infinite loops
+    iteration = 0
+    
+    while '<ProductWrapper' in text and iteration < max_iterations:
+        iteration += 1
         
-        def process_wrapper(match):
-            attributes = match.group(1)
-            content = match.group(2)
-            
-            # Check for product attribute
-            product_match = re.search(r'product=["\']([^"\']+)["\']', attributes)
-            notallowed_match = re.search(r'notAllowed=["\']([^"\']+)["\']', attributes)
-            
-            if product_match:
-                # Parse comma-separated or array-like values
-                products_str = product_match.group(1)
-                # Handle array notation if present
-                products_str = products_str.strip('[]').replace(' ', '')
-                allowed_products = [p.strip() for p in products_str.split(',')]
-                
-                if product in allowed_products:
-                    return content  # Include content without wrapper
-                else:
-                    return ''  # Remove everything
-                    
-            elif notallowed_match:
-                # Parse notAllowed products
-                excluded_str = notallowed_match.group(1)
-                excluded_str = excluded_str.strip('[]').replace(' ', '')
-                excluded_products = [p.strip() for p in excluded_str.split(',')]
-                
-                if product not in excluded_products:
-                    return content  # Include content without wrapper
-                else:
-                    return ''  # Remove everything
-                    
-            else:
-                # No recognized attributes, remove the wrapper
-                return ''
-        
-        # Apply replacements
-        new_text = pattern.sub(process_wrapper, text)
-        
-        # If no changes were made, break to avoid infinite loop
-        if new_text == text:
-            # Clean up any remaining unmatched closing tags
-            text = re.sub(r'</ProductWrapper>', '', text)
+        # Find the first opening ProductWrapper tag
+        start_match = re.search(r'<ProductWrapper\s+([^>]*?)>', text)
+        if not start_match:
             break
             
-        text = new_text
+        start_pos = start_match.start()
+        end_pos = start_match.end()
+        attributes = start_match.group(1)
+        
+        # Now find the matching closing tag, accounting for nested tags
+        depth = 1
+        search_pos = end_pos
+        
+        while depth > 0 and search_pos < len(text):
+            # Look for the next opening or closing tag
+            opening = text.find('<ProductWrapper', search_pos)
+            closing = text.find('</ProductWrapper>', search_pos)
+            
+            if closing == -1:
+                # No closing tag found, malformed structure
+                print(f"Warning: Unclosed ProductWrapper tag found")
+                text = text[:start_pos] + text[end_pos:]
+                break
+            
+            if opening != -1 and opening < closing:
+                # Found another opening tag before the closing tag (nested)
+                depth += 1
+                search_pos = opening + 1
+            else:
+                # Found a closing tag
+                depth -= 1
+                if depth == 0:
+                    # This is our matching closing tag
+                    closing_end = closing + len('</ProductWrapper>')
+                    content = text[end_pos:closing]
+                    
+                    # Determine if we should include this content
+                    product_match = re.search(r'product\s*=\s*["\']([^"\']+)["\']', attributes)
+                    notallowed_match = re.search(r'notAllowed\s*=\s*["\']([^"\']+)["\']', attributes)
+                    
+                    include_content = False
+                    
+                    if product_match:
+                        products_str = product_match.group(1)
+                        products_str = products_str.strip('[]').replace(' ', '')
+                        allowed_products = [p.strip() for p in products_str.split(',')]
+                        include_content = product in allowed_products
+                    elif notallowed_match:
+                        excluded_str = notallowed_match.group(1)
+                        excluded_str = excluded_str.strip('[]').replace(' ', '')
+                        excluded_products = [p.strip() for p in excluded_str.split(',')]
+                        include_content = product not in excluded_products
+                    
+                    # Replace the entire wrapper with content or nothing
+                    if include_content:
+                        # Process nested ProductWrapper tags in the content first
+                        content = resolve_all_product_tags(content, product)
+                        text = text[:start_pos] + content + text[closing_end:]
+                    else:
+                        text = text[:start_pos] + text[closing_end:]
+                    
+                    break
+                else:
+                    search_pos = closing + 1
     
     # Final cleanup of any orphaned closing tags
     text = re.sub(r'</ProductWrapper>', '', text)
@@ -267,9 +305,11 @@ def resolve_imports(mdxFilePath):
     matches = re.findall(r'import\s+(\w+?)\s+from\s+\'(.+?md[x]*)\';?\n*', mdxFileContents)
     if not matches:
         return mdxFileContents
-    # Delete import statements
-    mdxFileContents = re.sub(r'import\s+\*[\s\w]*from\s+\'[a-zA-Z0-9@/]*?\';' , "", mdxFileContents)    
-    mdxFileContents = re.sub(r'import\s+(\w+?)\s+from\s+\'(.+?md[x]*)\';?\n*' , "", mdxFileContents)
+    
+    # Delete import statements (consolidated into one pattern)
+    import_pattern = r'import\s+(?:\*[\s\w]*|\w+?)\s+from\s+\'[^\']+\';?\n*'
+    mdxFileContents = re.sub(import_pattern, '', mdxFileContents)
+    
     # Replace tags with file content
     for tag, filepath in matches:
         filepath = filepath.replace('@docs', docsPath)
@@ -296,9 +336,168 @@ def resolve_header(text):
     new_text = re.sub(r'export\s+const\s+toc\s*=\s*\[\s*\{\s*\}\];', '', new_text)
     return new_text
 
+def resolve_tabs(text):
+    """
+    Convert Tabs and TabItem components to markdown format.
+    <Tabs>
+      <TabItem value="..." label="Header">Content</TabItem>
+    </Tabs>
+    becomes:
+    **Header**
+    Content
+    """
+    
+    # Keep processing until no more Tabs blocks are found
+    while '<Tabs' in text:
+        # Pattern to match the entire Tabs block including all TabItems
+        tabs_pattern = re.compile(
+            r'<Tabs[^>]*?>(.*?)</Tabs>',
+            re.MULTILINE | re.DOTALL
+        )
+        
+        match = tabs_pattern.search(text)
+        if not match:
+            # No complete Tabs block found, break
+            break
+            
+        tabs_content = match.group(1)
+        
+        # Pattern to match individual TabItem components
+        tabitem_pattern = re.compile(
+            r'<TabItem\s+([^>]*?)>(.*?)</TabItem>',
+            re.MULTILINE | re.DOTALL
+        )
+        
+        # Extract all TabItems
+        tabitems = tabitem_pattern.findall(tabs_content)
+        
+        # Convert each TabItem to markdown
+        result = []
+        for attributes, content in tabitems:
+            # Extract value and label from attributes
+            value_match = re.search(r'value\s*=\s*["\']([^"\']*)["\']', attributes)
+            label_match = re.search(r'label\s*=\s*["\']([^"\']*)["\']', attributes)
+            
+            value = value_match.group(1) if value_match else None
+            label = label_match.group(1) if label_match else None
+            
+            # Use label as header, fallback to value if label is empty, then to 'Tab'
+            header = label if label else (value if value else 'Tab')
+            
+            # Add header as bold text
+            result.append(f'**{header}**')
+            # Add the content (strip leading/trailing whitespace)
+            result.append(content.strip())
+            result.append('')  # Add empty line for spacing
+        
+        # Create replacement text
+        replacement = '\n'.join(result).rstrip() + '\n' if result else ''
+        
+        # Replace the entire matched Tabs block with the markdown version
+        text = text[:match.start()] + replacement + text[match.end():]
+    
+    # Clean up any orphaned TabItem tags that aren't inside Tabs blocks
+    # These might be left over from incomplete structures or parsing errors
+    
+    # Remove standalone TabItem opening and closing tags
+    text = re.sub(r'<TabItem\s+[^>]*?>', '', text)
+    text = re.sub(r'</TabItem>', '', text)
+    
+    # Remove any remaining Tabs tags (opening or closing)
+    text = re.sub(r'<Tabs[^>]*?>', '', text)
+    text = re.sub(r'</Tabs>', '', text)
+    
+    return text
+
+def resolve_details(text):
+    """
+    Convert HTML details/summary tags to markdown format.
+    <details>
+      <summary>Summary text</summary>
+      Content
+    </details>
+    becomes:
+    **Summary text**
+    
+    Content
+    """
+    
+    # Pattern to match details blocks with summary
+    details_pattern = re.compile(
+        r'<details[^>]*?>\s*<summary[^>]*?>(.*?)</summary>(.*?)</details>',
+        re.MULTILINE | re.DOTALL
+    )
+    
+    def process_details(match):
+        summary_text = match.group(1).strip()
+        content = match.group(2).strip()
+        
+        # Create markdown replacement
+        result = f'**{summary_text}**\n\n{content}'
+        return result
+    
+    # Replace all details blocks
+    text = details_pattern.sub(process_details, text)
+    
+    # Clean up any orphaned details or summary tags
+    text = re.sub(r'<details[^>]*?>', '', text)
+    text = re.sub(r'</details>', '', text)
+    text = re.sub(r'<summary[^>]*?>', '', text)
+    text = re.sub(r'</summary>', '', text)
+    
+    return text
+
+def remove_imports_outside_codeblocks(text):
+    """
+    Remove import statements that are outside of code blocks.
+    Code blocks can be triple backticks (```) or <CodeBlock> tags.
+    """
+    
+    # Store all code blocks with their positions
+    protected_regions = []
+    
+    # Find all triple backtick code blocks
+    for match in re.finditer(r'```[\s\S]*?```', text):
+        protected_regions.append((match.start(), match.end()))
+    
+    # Find all CodeBlock tags
+    for match in re.finditer(r'<CodeBlock[\s\S]*?</CodeBlock>', text):
+        protected_regions.append((match.start(), match.end()))
+    
+    # Sort regions by start position
+    protected_regions.sort()
+    
+    # Function to check if a position is inside a protected region
+    def is_protected(pos):
+        for start, end in protected_regions:
+            if start <= pos < end:
+                return True
+        return False
+    
+    # Find and remove import statements that are not in protected regions
+    lines = text.split('\n')
+    result_lines = []
+    current_pos = 0
+    
+    for line in lines:
+        line_start = current_pos
+        
+        # Check if this line contains an import statement
+        import_match = re.match(r'^\s*import\s+.*?\s+from\s+[\'"].*?[\'"];?\s*$', line)
+        
+        # If it's an import and not in a protected region, skip it
+        if import_match and not is_protected(line_start):
+            pass  # Skip this line
+        else:
+            result_lines.append(line)
+        
+        current_pos += len(line) + 1  # +1 for the newline character
+    
+    return '\n'.join(result_lines)
+
 def resolve_images(text):
     # Find all matches of the image link pattern
-    matches = re.findall(r'!\[.*\]\((.+)\)', text)
+    matches = re.findall(r'!\[.*?\]\((.+?)\)', text)
 
     if matches:
         # create the images directory if it doesn't exist
@@ -356,7 +555,7 @@ def resolve_hyperlinks(text, base_folder, http_url):
 
         # Create the new URL by adding the HTTP prefix
         new_url = '{}/{}'.format(http_url, rel_path.replace('\\','/'))
-        new_url= new_url.replace('//','/')
+        new_url = new_url.replace('//','/')
 
         # Replace the link in the text
         text = text.replace(link, new_url)
@@ -391,6 +590,15 @@ try:
 
     # Process document header and add title
     mdxContents = resolve_header(mdxContents)
+
+    # Resolve Tabs components to markdown
+    mdxContents = resolve_tabs(mdxContents)
+    
+    # Resolve details/summary components to markdown
+    mdxContents = resolve_details(mdxContents)
+
+    # Remove import statements that are outside code blocks
+    mdxContents = remove_imports_outside_codeblocks(mdxContents)
 
     # Apply final cleanup of platform and product tags (in case any were missed)
     mdxContents = resolve_all_platform_tags(mdxContents, platform)
