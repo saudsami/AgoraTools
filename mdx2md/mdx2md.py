@@ -4,6 +4,8 @@ import shutil #Copy images
 import argparse
 import sys
 import json
+import yaml
+from datetime import datetime
 
 # Default value
 platform = 'android'
@@ -328,13 +330,30 @@ def resolve_imports(mdxFilePath):
 
     return mdxFileContents
 
-def resolve_header(text):
-    regex = r"^---\ntitle:\s*'(.*)'[\s\S]*?\n---$"
-    replacement = r"# \1"
+def resolve_header(content):
+    """
+    - Removes 'export const ...' blocks
+    - Adds '# title' heading at the top if frontmatter has a title
+    """
+    # Remove export statements
+    content = re.sub(r"^export\s+const\s+.*$", "", content, flags=re.MULTILINE).strip()
 
-    new_text = re.sub(regex, replacement, text, flags=re.MULTILINE|re.DOTALL)
-    new_text = re.sub(r'export\s+const\s+toc\s*=\s*\[\s*\{\s*\}\];', '', new_text)
-    return new_text
+    # Check for frontmatter
+    fm_match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", content, re.DOTALL)
+    if fm_match:
+        fm_dict = yaml.safe_load(fm_match.group(1)) or {}
+        body = content[fm_match.end():]
+    else:
+        fm_dict = {}
+        body = content
+
+    # Add heading if title exists
+    if "title" in fm_dict:
+        heading = f"# {fm_dict['title']}\n\n"
+        if not body.startswith("# "):  # avoid duplicate heading
+            body = heading + body
+
+    return content[:fm_match.end()] + body if fm_match else body
 
 def resolve_tabs(text):
     """
@@ -444,6 +463,71 @@ def resolve_details(text):
     text = re.sub(r'</details>', '', text)
     text = re.sub(r'<summary[^>]*?>', '', text)
     text = re.sub(r'</summary>', '', text)
+    
+    return text
+
+def resolve_admonitions(text):
+    """
+    Convert Admonition components to markdown blockquote format.
+    <Admonition type="info" title="Custom Title">
+      Content
+    </Admonition>
+    becomes:
+    > ℹ️ **Custom Title**
+    > Content
+    
+    or if no title:
+    > ℹ️ **Info**
+    > Content
+    """
+    
+    # Map admonition types to emojis and default titles
+    admonition_types = {
+        'note': ('📝', 'Note'),
+        'tip': ('💡', 'Tip'),
+        'info': ('ℹ️', 'Info'),
+        'caution': ('⚠️', 'Caution'),
+        'warning': ('⚠️', 'Warning'),
+        'danger': ('🚨', 'Danger'),
+        'important': ('❗', 'Important'),
+        'success': ('✅', 'Success'),
+    }
+    
+    # Pattern to match Admonition blocks
+    admonition_pattern = re.compile(
+        r'<Admonition\s+([^>]*?)>(.*?)</Admonition>',
+        re.MULTILINE | re.DOTALL
+    )
+    
+    def process_admonition(match):
+        attributes = match.group(1)
+        content = match.group(2).strip()
+        
+        # Extract type and title attributes
+        type_match = re.search(r'type\s*=\s*["\']([^"\']*)["\']', attributes)
+        title_match = re.search(r'title\s*=\s*["\']([^"\']*)["\']', attributes)
+        
+        admonition_type = type_match.group(1).lower() if type_match else 'note'
+        custom_title = title_match.group(1) if title_match else None
+        
+        # Get emoji and default title for the type
+        emoji, default_title = admonition_types.get(admonition_type, ('📝', 'Note'))
+        
+        # Use custom title if provided, otherwise use default
+        title = custom_title if custom_title else default_title
+        
+        # Create markdown blockquote format
+        # Split content into lines and add > prefix to each
+        lines = content.split('\n')
+        quoted_lines = [f'> {line}' if line.strip() else '>' for line in lines]
+        
+        # Add the title line with emoji
+        result = f'> {emoji} **{title}**\n' + '\n'.join(quoted_lines)
+        
+        return result
+    
+    # Replace all Admonition blocks
+    text = admonition_pattern.sub(process_admonition, text)
     
     return text
 
@@ -562,6 +646,97 @@ def resolve_hyperlinks(text, base_folder, http_url):
 
     return text
 
+def resolve_codeblocks(text):
+    """
+    Convert CodeBlock components to markdown code blocks.
+    Handles both:
+    <CodeBlock language="dart">{`code here`}</CodeBlock>
+    and
+    <CodeBlock language="dart">code here</CodeBlock>
+
+
+    Output:
+    ```dart
+    code here
+    ```
+    """
+
+
+    # Pattern for {`code`} style
+    codeblock_pattern_wrapped = re.compile(
+    r'<CodeBlock\s+([^>]*?)>\s*\{`(.*?)`}\s*</CodeBlock>',
+    re.MULTILINE | re.DOTALL
+    )
+
+
+    # Pattern for raw code style (no {` `})
+    codeblock_pattern_raw = re.compile(
+    r'<CodeBlock\s*([^>]*?)>(.*?)</CodeBlock>',
+    re.MULTILINE | re.DOTALL
+    )
+
+
+    def process_codeblock(attributes, code_content):
+        # Extract language
+        language_match = re.search(r'language\s*=\s*["\']([^"\']*)["\']', attributes)
+        language = language_match.group(1) if language_match else ''
+
+
+        # Unescape characters if wrapped
+        code_content = code_content.replace('\\\\', '\\')
+        code_content = code_content.replace('\\n', '\n')
+        code_content = code_content.replace('\\t', '\t')
+        code_content = code_content.replace('\\r', '\r')
+        code_content = code_content.replace('\\"', '"')
+        code_content = code_content.replace("\\'", "'")
+        code_content = code_content.replace('\\`', '`')
+
+        return f'```{language}\n{code_content.strip()}\n```'
+
+    # First handle wrapped {` `}
+    text = codeblock_pattern_wrapped.sub(lambda m: process_codeblock(m.group(1), m.group(2)), text)
+
+
+    # Then handle raw blocks
+    text = codeblock_pattern_raw.sub(lambda m: process_codeblock(m.group(1), m.group(2)), text)
+
+    return text
+
+def add_frontmatter(content, source_file, platform="flutter"):
+    """
+    Keeps original frontmatter (title, description, sidebar_position, etc.),
+    and appends/updates platform, exported_from, and export_timestamp.
+    """
+    filename = os.path.basename(source_file)
+    exported_from = f"https://docs.agora.io/en/video-calling/get-started/{filename}?platform={platform}"
+    export_timestamp = datetime.utcnow().isoformat() + "Z"
+
+    # Match existing frontmatter
+    fm_match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", content, re.DOTALL)
+    if fm_match:
+        original_fm = fm_match.group(1)
+        body = content[fm_match.end():]
+        fm_dict = yaml.safe_load(original_fm) or {}
+    else:
+        fm_dict = {}
+        body = content
+
+    # Update/add required fields
+    fm_dict["platform"] = platform
+    fm_dict["exported_from"] = exported_from
+    fm_dict["export_timestamp"] = export_timestamp
+
+    # Preserve key order: title, description, sidebar_position first
+    ordered_keys = ["title", "description", "sidebar_position"]
+    new_fm = {}
+    for key in ordered_keys:
+        if key in fm_dict:
+            new_fm[key] = fm_dict.pop(key)
+    new_fm.update(fm_dict)  # add remaining fields
+
+    new_frontmatter = "---\n" + yaml.safe_dump(new_fm, sort_keys=False).strip() + "\n---\n\n"
+    return new_frontmatter + body
+
 # -----Main------
 
 try:
@@ -596,6 +771,12 @@ try:
     
     # Resolve details/summary components to markdown
     mdxContents = resolve_details(mdxContents)
+    
+    # Resolve Admonition components to markdown blockquotes
+    mdxContents = resolve_admonitions(mdxContents)
+
+    # Resolve CodeBlock components to markdown fenced code blocks
+    mdxContents = resolve_codeblocks(mdxContents)
 
     # Remove import statements that are outside code blocks
     mdxContents = remove_imports_outside_codeblocks(mdxContents)
@@ -615,6 +796,9 @@ try:
     docFolder = os.path.dirname(mdxPath)
     mdxContents = resolve_hyperlinks(mdxContents, docFolder, siteBaseUrl)
 
+    # Add frontmatter
+    mdxContents = add_frontmatter(mdxContents, mdxPath, platform=platform)
+
     # Write the modified contents to a new md file
     if not os.path.exists('./output'):
         os.makedirs('./output')
@@ -624,6 +808,7 @@ try:
         file.write(mdxContents)
     
     print(f"Successfully converted {outputFilename}")
+
     
 except Exception as e:
     print(f"Error processing file: {e}")
