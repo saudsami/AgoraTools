@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--platform', type=str, help='Target platform: android|electron|flutter|ios|macos|react-native|unity|web|windows')
 parser.add_argument('--product', type=str, help='Agora product: video-calling|interactive-live-streaming|etc.')
 parser.add_argument('--mdxPath', type=str, help='The absolute path to the mdx file')
+parser.add_argument('--output-file', type=str, help='Explicit output filename (including .md)')
 
 # Access the values of the named arguments
 args = parser.parse_args()
@@ -702,14 +703,14 @@ def resolve_codeblocks(text):
 
     return text
 
-def add_frontmatter(content, source_file, platform="flutter"):
+def add_frontmatter(content, source_file, platform="flutter", output_file=None):
     """
     Keeps original frontmatter (title, description, sidebar_position, etc.),
-    and appends/updates platform, exported_from, and export_timestamp.
+    and appends/updates platform, exported_from, and exported_on.
     """
     filename = os.path.basename(source_file)
     exported_from = f"https://docs.agora.io/en/video-calling/get-started/{filename}?platform={platform}"
-    export_timestamp = datetime.utcnow().isoformat() + "Z"
+    exported_on = datetime.utcnow().isoformat() + "Z"
 
     # Match existing frontmatter
     fm_match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", content, re.DOTALL)
@@ -724,15 +725,17 @@ def add_frontmatter(content, source_file, platform="flutter"):
     # Update/add required fields
     fm_dict["platform"] = platform
     fm_dict["exported_from"] = exported_from
-    fm_dict["export_timestamp"] = export_timestamp
+    fm_dict["exported_on"] = exported_on
+    if output_file:
+        fm_dict["exported_file"] = os.path.basename(output_file)
 
-    # Preserve key order: title, description, sidebar_position first
+    # Preserve key order
     ordered_keys = ["title", "description", "sidebar_position"]
     new_fm = {}
     for key in ordered_keys:
         if key in fm_dict:
             new_fm[key] = fm_dict.pop(key)
-    new_fm.update(fm_dict)  # add remaining fields
+    new_fm.update(fm_dict)
 
     new_frontmatter = "---\n" + yaml.safe_dump(new_fm, sort_keys=False).strip() + "\n---\n\n"
     return new_frontmatter + body
@@ -797,18 +800,37 @@ try:
     mdxContents = resolve_hyperlinks(mdxContents, docFolder, siteBaseUrl)
 
     # Add frontmatter
-    mdxContents = add_frontmatter(mdxContents, mdxPath, platform=platform)
+    mdxContents = add_frontmatter(mdxContents, mdxPath, platform=platform, output_file=args.output_file)
 
     # Write the modified contents to a new md file
-    if not os.path.exists('./output'):
-        os.makedirs('./output')
-    outputFilename = os.path.basename(mdxPath)
-    outputFilename = os.path.splitext(outputFilename)[0] + '.md'
-    with open('./output/' + outputFilename, 'w', encoding='utf-8') as file:
-        file.write(mdxContents)
-    
-    print(f"Successfully converted {outputFilename}")
+    if args.output_file:
+        # Use exactly what the user provided
+        output_path = args.output_file
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    else:
+        if not os.path.exists('./output'):
+            os.makedirs('./output')
 
+        base_name = os.path.splitext(os.path.basename(mdxPath))[0]
+        # Append platform unless explicitly disabled in frontmatter
+        fm_match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", mdxContents, re.DOTALL)
+        if fm_match:
+            fm_dict = yaml.safe_load(fm_match.group(1)) or {}
+            platform_selector = fm_dict.get("platform_selector", True)
+        else:
+            platform_selector = True
+
+        if platform_selector and platform:
+            outputFilename = f"{base_name}_{platform}.md"
+        else:
+            outputFilename = f"{base_name}.md"
+
+        output_path = os.path.join('./output', outputFilename)
+
+    with open(output_path, 'w', encoding='utf-8') as file:
+        file.write(mdxContents)
+
+    print(f"Successfully converted {output_path}")
     
 except Exception as e:
     print(f"Error processing file: {e}")
