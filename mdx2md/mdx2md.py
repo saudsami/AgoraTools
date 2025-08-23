@@ -42,12 +42,23 @@ assetsPath = docsPath + "/assets"
 if product is None:
     # Get the product name from the path
     dirname = os.path.dirname(mdxPath)
+    # Normalize path separators to handle mixed separators
+    dirname = dirname.replace('/', os.path.sep)
     # Split the directory path into parts
     parts = dirname.split(os.path.sep)
     # Find the index of the "docs" folder
-    docs_index = parts.index("docs")
-    # product name is the name of the docs sub-folder
-    product = parts[docs_index + 1]
+    try:
+        docs_index = parts.index("docs")
+        # product name is the name of the docs sub-folder
+        if docs_index + 1 < len(parts):
+            product = parts[docs_index + 1]
+        else:
+            print("Error: No product folder found after 'docs'")
+            sys.exit(-4)
+    except ValueError:
+        print("Error: 'docs' folder not found in path")
+        print(f"Available parts: {parts}")
+        sys.exit(-5)
 
 # ----- Helper functions -------
 
@@ -123,6 +134,195 @@ def createDictionary(path):
 def resolve_local_variables(text, product, productDictionary, platform, platformDictionary):
     text = re.sub(r'<Vpd\s+k="(\w+)"\s*/>', lambda match: productDictionary[product].get(match.group(1), match.group(0)), text)
     text = re.sub(r'<Vpl\s+k="(\w+)"\s*/>', lambda match: platformDictionary[platform].get(match.group(1), match.group(0)), text)
+    return text
+
+def resolve_product_overview(text):
+    """
+    Convert ProductOverview components to structured markdown.
+    Handles all component attributes and generates organized sections.
+    """
+    
+    # Pattern to match the entire ProductOverview component
+    product_overview_pattern = re.compile(
+        r'<ProductOverview\s*([^>]*?)>(.*?)</ProductOverview>',
+        re.MULTILINE | re.DOTALL
+    )
+    
+    def process_product_overview(match):
+        attributes_str = match.group(1)
+        inner_content = match.group(2).strip()
+        
+        # Extract attributes
+        attributes = {}
+        
+        # Simple string attributes
+        simple_attrs = ['title', 'img', 'quickStartLink', 'uiQuickStartLink', 'uiSamplesQuickStartLink', 
+                       'fastboardQuickStartLink', 'apiReferenceLink', 'authenticationLink', 'samplesLink']
+        
+        for attr in simple_attrs:
+            pattern = f'{attr}\\s*=\\s*["\']([^"\']*)["\']'
+            match_attr = re.search(pattern, attributes_str)
+            if match_attr:
+                attributes[attr] = match_attr.group(1)
+        
+        # Extract productFeatures array (JavaScript object syntax)
+        features_match = re.search(r'productFeatures\s*=\s*\{?\[\s*(.*?)\s*\]\}?', attributes_str, re.DOTALL)
+        features = []
+        
+        if features_match:
+            features_str = features_match.group(1)
+            # Split by objects (looking for closing brace followed by comma or end)
+            feature_objects = re.findall(r'\{([^}]*)\}', features_str)
+            
+            for feature_obj in feature_objects:
+                feature = {}
+                # Extract title
+                title_match = re.search(r'title:\s*["\']([^"\']*)["\']', feature_obj)
+                if title_match:
+                    feature['title'] = title_match.group(1)
+                
+                # Extract content (handle multiline strings with +)
+                content_match = re.search(r'content:\s*"([^"]*(?:\s*\+\s*"[^"]*")*)"', feature_obj, re.DOTALL)
+                if not content_match:
+                    # Try with single quotes
+                    content_match = re.search(r"content:\s*'([^']*(?:\s*\+\s*'[^']*')*)'", feature_obj, re.DOTALL)
+                
+                if content_match:
+                    content = content_match.group(1)
+                    # Clean up concatenated strings - handle both quote types
+                    content = re.sub(r'"\s*\+\s*"', '', content)
+                    content = re.sub(r"'\s*\+\s*'", '', content)
+                    # Remove any remaining quotes from concatenation
+                    content = re.sub(r'"\s*\+\s*\'', '', content)
+                    content = re.sub(r'\'\s*\+\s*"', '', content)
+                    feature['content'] = content.strip()
+                
+                # Extract link
+                link_match = re.search(r'link:\s*["\']([^"\']*)["\']', feature_obj)
+                if link_match:
+                    feature['link'] = link_match.group(1)
+                
+                if feature:  # Only add if we extracted something
+                    features.append(feature)
+        
+        # Build markdown output
+        result_parts = []
+        
+        # Add title as h1
+        if attributes.get('title'):
+            result_parts.append(f"# {attributes['title']}")
+            result_parts.append('')
+        
+        # Add inner content (process it through existing functions)
+        if inner_content:
+            # Process variables in inner content
+            processed_content = inner_content
+            
+            # Replace global variables
+            global_pattern = r'<Vg\s+k\s*=\s*"(\w+)"\s*\/?>'
+            processed_content = re.sub(global_pattern, lambda m: globalVariables.get(m.group(1), m.group(0)), processed_content)
+            
+            # Replace product and platform variables
+            processed_content = resolve_local_variables(processed_content, product, productDict, platform, platformDict)
+            
+            result_parts.append(processed_content)
+            result_parts.append('')
+        
+        # Build "Start building with" section
+        buttons = []
+        
+        # Primary buttons (large ones)
+        if attributes.get('quickStartLink'):
+            buttons.append({
+                'label': 'SDK quickstart',
+                'link': attributes['quickStartLink'],
+                'description': 'Customize your experience from the start with our flexible Video SDK.',
+                'type': 'primary'
+            })
+        
+        if attributes.get('uiQuickStartLink'):
+            buttons.append({
+                'label': 'UI Kit quickstart', 
+                'link': attributes['uiQuickStartLink'],
+                'description': 'Start with a pre-built video UI and video calling logic - customize as you go.',
+                'type': 'primary'
+            })
+        
+        # Secondary buttons (compact ones)
+        if attributes.get('authenticationLink'):
+            buttons.append({
+                'label': 'Authentication',
+                'link': attributes['authenticationLink'],
+                'type': 'secondary'
+            })
+        
+        if attributes.get('apiReferenceLink'):
+            buttons.append({
+                'label': 'API reference',
+                'link': attributes['apiReferenceLink'],
+                'type': 'secondary'
+            })
+        
+        if attributes.get('samplesLink'):
+            buttons.append({
+                'label': 'Samples',
+                'link': attributes['samplesLink'],
+                'type': 'secondary'
+            })
+        
+        # Add buttons section if we have any
+        if buttons:
+            result_parts.append('## Start building with')
+            result_parts.append('')
+            
+            for button in buttons:
+                # Resolve relative links to full URLs
+                link = button['link']
+                if link.startswith('/') and not link.startswith('http'):
+                    # Convert relative link to full URL
+                    link = f"{siteBaseUrl}{link}"
+                
+                if button['type'] == 'primary' and button.get('description'):
+                    result_parts.append(f"- [{button['label']}]({link}) - {button['description']}")
+                else:
+                    result_parts.append(f"- [{button['label']}]({link})")
+            
+            result_parts.append('')
+        
+        # Add product features section
+        if features:
+            result_parts.append('## Product Features')
+            result_parts.append('')
+            
+            for feature in features:
+                if feature.get('title'):
+                    if feature.get('link'):
+                        # Resolve relative links to full URLs and fix double /en/
+                        link = feature['link']
+                        if link.startswith('/en/'):
+                            # Already has /en/, just add base URL
+                            link = f"{siteBaseUrl}{link}"
+                        elif link.startswith('/') and not link.startswith('http'):
+                            # Add /en/ prefix
+                            link = f"{siteBaseUrl}/en{link}"
+                        
+                        # Make the title a link
+                        feature_line = f"- [**{feature['title']}**]({link})"
+                    else:
+                        feature_line = f"- **{feature['title']}**"
+                    
+                    if feature.get('content'):
+                        feature_line += f" - {feature['content']}"
+                    
+                    result_parts.append(feature_line)
+            
+            result_parts.append('')
+        
+        return '\n'.join(result_parts).rstrip()
+    
+    # Process all ProductOverview components
+    text = product_overview_pattern.sub(process_product_overview, text)
+    
     return text
 
 # New comprehensive platform tag resolver
@@ -703,13 +903,11 @@ def resolve_codeblocks(text):
 
     return text
 
-def add_frontmatter(content, source_file, platform="flutter", output_file=None):
+def add_frontmatter(content, source_file, platform="flutter", exported_from=None, output_file=None):
     """
     Keeps original frontmatter (title, description, sidebar_position, etc.),
     and appends/updates platform, exported_from, and exported_on.
     """
-    filename = os.path.basename(source_file)
-    exported_from = f"https://docs.agora.io/en/video-calling/get-started/{filename}?platform={platform}"
     exported_on = datetime.utcnow().isoformat() + "Z"
 
     # Match existing frontmatter
@@ -724,7 +922,8 @@ def add_frontmatter(content, source_file, platform="flutter", output_file=None):
 
     # Update/add required fields
     fm_dict["platform"] = platform
-    fm_dict["exported_from"] = exported_from
+    if exported_from:
+        fm_dict["exported_from"] = exported_from
     fm_dict["exported_on"] = exported_on
     if output_file:
         fm_dict["exported_file"] = os.path.basename(output_file)
@@ -749,15 +948,36 @@ try:
 
     # Load global variables into a dictionary
     file_path = docsPath + '/shared/variables/global.js'
-    globalVariables = read_variables(file_path)
+    if not os.path.exists(file_path):
+        print(f"Warning: Global variables file not found at {file_path}")
+        globalVariables = {}
+    else:
+        globalVariables = read_variables(file_path)
 
     # Create product and platform dictionaries to resolve <Vpl> and <Vpd> tags
-    productDict = createDictionary(docsPath + '/shared/variables/product.js')
-    platformDict = createDictionary(docsPath + '/shared/variables/platform.js')
+    product_path = docsPath + '/shared/variables/product.js'
+    platform_path = docsPath + '/shared/variables/platform.js'
+    
+    if not os.path.exists(product_path):
+        print(f"Warning: Product dictionary file not found at {product_path}")
+        productDict = {}
+    else:
+        productDict = createDictionary(product_path)
+    
+    if not os.path.exists(platform_path):
+        print(f"Warning: Platform dictionary file not found at {platform_path}")
+        platformDict = {}
+    else:
+        platformDict = createDictionary(platform_path)
 
     # Resolve import statements 
     # Also resolves PlatformWrapper and ProductWrapper tags
     mdxContents = resolve_imports(mdxPath)
+    
+    # Check for ProductOverview component and handle specially
+    if '<ProductOverview' in mdxContents:
+        print("ProductOverview component detected - using specialized conversion")
+        mdxContents = resolve_product_overview(mdxContents)
 
     # Replace global variables <Vg k="KEY" /> using the dictionary
     regex_pattern = r'<Vg\s+k\s*=\s*"(\w+)"\s*\/?>'
@@ -800,7 +1020,26 @@ try:
     mdxContents = resolve_hyperlinks(mdxContents, docFolder, siteBaseUrl)
 
     # Add frontmatter
-    mdxContents = add_frontmatter(mdxContents, mdxPath, platform=platform, output_file=args.output_file)
+    normalized_path = mdxPath.replace(os.sep, "/")
+
+    # Strip everything before "docs/"
+    if "/docs/" in normalized_path:
+        relative_path = normalized_path.split("/docs/", 1)[1]
+    else:
+        relative_path = os.path.basename(normalized_path)
+
+    exported_from = f"https://docs.agora.io/en/{relative_path}"
+    if platform:
+        exported_from += f"?platform={platform}"
+
+    # Add frontmatter
+    mdxContents = add_frontmatter(
+        mdxContents,
+        mdxPath,
+        platform=platform,
+        exported_from=exported_from,
+        output_file=args.output_file
+    )
 
     # Write the modified contents to a new md file
     if args.output_file:
