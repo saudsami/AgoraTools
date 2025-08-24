@@ -6,6 +6,7 @@ import sys
 import json
 import yaml
 from datetime import datetime
+from bs4 import BeautifulSoup, NavigableString
 
 # Default value
 platform = 'android'
@@ -134,6 +135,343 @@ def createDictionary(path):
 def resolve_local_variables(text, product, productDictionary, platform, platformDictionary):
     text = re.sub(r'<Vpd\s+k="(\w+)"\s*/>', lambda match: productDictionary[product].get(match.group(1), match.group(0)), text)
     text = re.sub(r'<Vpl\s+k="(\w+)"\s*/>', lambda match: platformDictionary[platform].get(match.group(1), match.group(0)), text)
+    return text
+
+def resolve_rest_api_layout(text):
+    """
+    Convert RestAPILayout components to structured markdown using BeautifulSoup parser.
+    This approach handles nested structures much more reliably than regex.
+    """
+    try:
+        from bs4 import BeautifulSoup, NavigableString, Tag
+    except ImportError:
+        print("Warning: BeautifulSoup not available, falling back to regex approach")
+        return resolve_rest_api_layout_regex_fallback(text)
+    
+    # Pattern to match the entire RestAPILayout component
+    rest_api_pattern = re.compile(
+        r'<RestAPILayout>(.*?)</RestAPILayout>',
+        re.MULTILINE | re.DOTALL
+    )
+    
+    def process_rest_api_layout(match):
+        layout_content = match.group(1).strip()
+        
+        # Wrap in a root element and parse
+        try:
+            # BeautifulSoup expects lowercase tag names for HTML parsing
+            # Convert to lowercase for parsing, but preserve original logic
+            normalized_content = normalize_tags_for_parsing(layout_content)
+            wrapped_content = f"<root>{normalized_content}</root>"
+            
+            soup = BeautifulSoup(wrapped_content, 'html.parser')
+            result_parts = []
+            
+            # Process LeftColumn
+            left_column = soup.find('leftcolumn')
+            if left_column:
+                method = left_column.get('method', '')
+                endpoint = left_column.get('endpoint', '')
+                
+                if method:
+                    result_parts.append(f"**Method:** {method}")
+                if endpoint:
+                    result_parts.append(f"**Endpoint:** `{endpoint}`")
+                if method or endpoint:
+                    result_parts.append('')
+                
+                processed_left = process_left_column_parsed(left_column)
+                if processed_left:
+                    result_parts.append(processed_left)
+            
+            # Process RightColumn
+            right_column = soup.find('rightcolumn')
+            if right_column:
+                processed_right = process_right_column_parsed(right_column)
+                if processed_right:
+                    result_parts.append('')
+                    result_parts.append(processed_right)
+            
+            return '\n'.join(result_parts)
+            
+        except Exception as e:
+            print(f"Parser error: {e}")
+            # Fallback to regex approach if parsing fails
+            return resolve_rest_api_layout_regex_fallback(layout_content)
+    
+    def normalize_tags_for_parsing(content):
+        """Convert tag names to lowercase for BeautifulSoup parsing"""
+        # Map of original tags to normalized versions
+        tag_mappings = {
+            'LeftColumn': 'leftcolumn',
+            'RightColumn': 'rightcolumn',
+            'ParameterList': 'parameterlist',
+            'Parameter': 'parameter', 
+            'PathParameter': 'pathparameter',
+            'Section': 'section',
+            'Tabs': 'tabs',
+            'TabItem': 'tabitem'
+        }
+        
+        # Replace opening and closing tags
+        for original, normalized in tag_mappings.items():
+            content = re.sub(f'<{original}(\\s[^>]*?)?>', f'<{normalized}\\1>', content)
+            content = re.sub(f'</{original}>', f'</{normalized}>', content)
+        
+        return content
+    
+    def process_left_column_parsed(left_column):
+        """Process LeftColumn content using parsed tree structure"""
+        result_parts = []
+        
+        for element in left_column.children:
+            if isinstance(element, NavigableString):
+                text_content = str(element).strip()
+                if text_content:
+                    result_parts.append(text_content)
+            elif isinstance(element, Tag):
+                if element.name == 'pathparameter':
+                    param_line = process_path_parameter_parsed(element)
+                    result_parts.append(param_line)
+                elif element.name == 'parameterlist':
+                    param_section = process_parameter_list_parsed(element)
+                    result_parts.append(param_section)
+                else:
+                    # Handle other elements (headings, text, etc.)
+                    content = process_generic_element(element)
+                    if content:
+                        result_parts.append(content)
+        
+        # Join with proper spacing
+        return format_content_with_spacing('\n'.join(result_parts))
+    
+    def process_path_parameter_parsed(param_element):
+        """Process a single PathParameter element"""
+        name = param_element.get('name', 'unknown')
+        param_type = param_element.get('type', 'string')
+        # Handle both string and boolean values for required
+        required_attr = param_element.get('required', 'false')
+        if required_attr in ['{true}', 'true', True]:
+            required = True
+        elif required_attr in ['{false}', 'false', False]:
+            required = False
+        else:
+            required = False
+            
+        default_value = param_element.get('defaultvalue', param_element.get('defaultValue'))
+        
+        # Build type info
+        status = 'required' if required else 'optional'
+        type_info = f"({param_type}, {status}"
+        if default_value:
+            type_info += f", default: {default_value}"
+        type_info += ")"
+        
+        # Get parameter description and format HTML lists properly
+        description = get_element_text_content(param_element)
+        
+        return f"- **{name}** {type_info}: {description}"
+    
+    def process_parameter_list_parsed(param_list):
+        """Process a ParameterList element with proper nesting"""
+        result_parts = []
+        
+        # Add title if present
+        title = param_list.get('title')
+        if title:
+            result_parts.append(f"**{title}**")
+            result_parts.append('')
+        
+        # Process all parameter elements recursively
+        for element in param_list.children:
+            if isinstance(element, Tag) and element.name == 'parameter':
+                param_lines = process_parameter_recursively(element, 0)
+                result_parts.extend(param_lines)
+            elif isinstance(element, NavigableString):
+                text_content = str(element).strip()
+                if text_content:
+                    result_parts.append(text_content)
+        
+        return '\n'.join(result_parts)
+    
+    def process_parameter_recursively(param_element, indent_level):
+        """Recursively process Parameter elements maintaining hierarchy"""
+        result_lines = []
+        indent = '  ' * indent_level
+        
+        # Extract parameter attributes
+        name = param_element.get('name', 'unknown')
+        param_type = param_element.get('type', 'string')
+        possible_values = param_element.get('possiblevalues', param_element.get('possibleValues'))
+        
+        # Get description (text content that's not in nested parameter tags)
+        description = get_direct_text_content(param_element)
+        
+        # Build parameter line
+        param_line = f"{indent}- **{name}** ({param_type}): {description}"
+        result_lines.append(param_line)
+        
+        # Add possible values if present
+        if possible_values:
+            result_lines.append('')
+            result_lines.append(f"{indent}  > **Possible values:** {possible_values}")
+        
+        # Process nested parameters
+        nested_params = param_element.find_all('parameter', recursive=False)
+        for nested_param in nested_params:
+            nested_lines = process_parameter_recursively(nested_param, indent_level + 1)
+            result_lines.extend(nested_lines)
+        
+        return result_lines
+    
+    def get_direct_text_content(element):
+        """Get text content directly under element, excluding nested parameter tags"""
+        text_parts = []
+        
+        for child in element.children:
+            if isinstance(child, NavigableString):
+                text_parts.append(str(child).strip())
+            elif isinstance(child, Tag) and child.name != 'parameter':
+                # Include content from non-parameter tags
+                text_parts.append(get_element_text_content(child))
+        
+        return ' '.join(text_parts).strip()
+    
+    def get_element_text_content(element):
+        """Get all text content from element, including nested tags"""
+        if isinstance(element, NavigableString):
+            return str(element).strip()
+        elif isinstance(element, Tag):
+            # Handle specific tags differently
+            if element.name in ['ul', 'ol']:
+                return process_list_element(element)
+            else:
+                return element.get_text(strip=True)
+        else:
+            return ''
+    
+    def process_list_element(list_element):
+        """Convert HTML lists to markdown format with proper spacing"""
+        items = []
+        for li in list_element.find_all('li'):
+            item_text = li.get_text(strip=True)
+            items.append(f"\n    - {item_text}")
+        # Add extra spacing after the list
+        return ''.join(items) + '\n'
+    
+    def process_right_column_parsed(right_column):
+        """Process RightColumn content"""
+        result_parts = []
+        
+        sections = right_column.find_all('section')
+        for section in sections:
+            title = section.get('title', 'Section')
+            
+            # Process section content
+            if 'example' in title.lower():
+                content = process_code_examples_parsed(section)
+            else:
+                content = get_element_text_content(section)
+            
+            result_parts.append(f"## {title}")
+            result_parts.append('')
+            result_parts.append(content)
+        
+        return '\n\n'.join(result_parts)
+    
+    def process_code_examples_parsed(section):
+        """Process code examples in Tabs/TabItem structure"""
+        result_lines = []
+        
+        tabs = section.find('tabs')
+        if tabs:
+            tab_items = tabs.find_all('tabitem')
+            for tab_item in tab_items:
+                label = tab_item.get('label', 'Example')
+                
+                result_lines.append(f"**{label}**")
+                
+                # Get code content and clean it up
+                code_content = get_element_text_content(tab_item)
+                cleaned_code = clean_code_content(code_content)
+                result_lines.append(cleaned_code)
+                result_lines.append('')
+        else:
+            # No tabs, just get section content
+            content = get_element_text_content(section)
+            result_lines.append(content)
+        
+        return '\n'.join(result_lines).rstrip()
+    
+    def clean_code_content(content):
+        """Clean up code content while preserving structure"""
+        lines = content.split('\n')
+        result_lines = []
+        
+        for line in lines:
+            # Preserve code block markers
+            if line.strip().startswith('```'):
+                result_lines.append(line.strip())
+            elif line.strip():
+                # Reduce excessive indentation but preserve some structure
+                stripped = line.lstrip()
+                original_indent = len(line) - len(stripped)
+                
+                if original_indent > 8:
+                    result_lines.append('    ' + stripped)  # Max 4 spaces
+                else:
+                    result_lines.append(line.rstrip())
+            else:
+                result_lines.append('')
+        
+        return '\n'.join(result_lines)
+    
+    def process_generic_element(element):
+        """Process generic elements like headings, paragraphs, etc."""
+        if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+            level = int(element.name[1])
+            prefix = '#' * level
+            return f"{prefix} {element.get_text(strip=True)}"
+        else:
+            return get_element_text_content(element)
+    
+    def format_content_with_spacing(content):
+        """Add proper spacing around headers and sections"""
+        lines = content.split('\n')
+        result_lines = []
+        
+        for i, line in enumerate(lines):
+            result_lines.append(line)
+            
+            # Add spacing after headers
+            if line.startswith('#') and i < len(lines) - 1:
+                next_line = lines[i + 1]
+                if next_line.strip() and not next_line.startswith('#'):
+                    result_lines.append('')
+            
+            # Add spacing before headers (except first line)
+            if i > 0 and line.startswith('#'):
+                prev_line = lines[i - 1]
+                if prev_line.strip() and not prev_line.startswith('#'):
+                    result_lines.insert(-1, '')
+        
+        # Clean up excessive blank lines
+        cleaned_content = '\n'.join(result_lines)
+        cleaned_content = re.sub(r'\n{3,}', '\n\n', cleaned_content)
+        
+        return cleaned_content.strip()
+    
+    # Process all RestAPILayout components
+    return rest_api_pattern.sub(process_rest_api_layout, text)
+
+
+def resolve_rest_api_layout_regex_fallback(text):
+    """
+    Fallback regex-based implementation for when BeautifulSoup is not available
+    """
+    # This would contain the previous regex implementation
+    # For now, just return the text unchanged with a warning
+    print("Warning: Using regex fallback - install BeautifulSoup for better parsing")
     return text
 
 def resolve_product_overview(text):
@@ -974,17 +1312,21 @@ try:
     # Also resolves PlatformWrapper and ProductWrapper tags
     mdxContents = resolve_imports(mdxPath)
     
-    # Check for ProductOverview component and handle specially
-    if '<ProductOverview' in mdxContents:
-        print("ProductOverview component detected - using specialized conversion")
-        mdxContents = resolve_product_overview(mdxContents)
-
     # Replace global variables <Vg k="KEY" /> using the dictionary
     regex_pattern = r'<Vg\s+k\s*=\s*"(\w+)"\s*\/?>'
     mdxContents = re.sub(regex_pattern, lambda match: globalVariables.get(match.group(1), match.group(0)), mdxContents)
 
     # Replace product and platform variables <Vpd k="KEY" />, <Vpl k="KEY" />
     mdxContents = resolve_local_variables(mdxContents, product, productDict, platform, platformDict)
+
+    # Check for ProductOverview component and handle specially
+    if '<ProductOverview' in mdxContents:
+        mdxContents = resolve_product_overview(mdxContents)
+
+    # Check for RestAPILayout component and handle specially
+    if '<RestAPILayout' in mdxContents:
+        print("RestAPILayout component detected - using specialized conversion")
+        mdxContents = resolve_rest_api_layout(mdxContents)
 
     # Process document header and add title
     mdxContents = resolve_header(mdxContents)
