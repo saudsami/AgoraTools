@@ -267,10 +267,39 @@ def resolve_rest_api_layout(text):
             type_info += f", default: {default_value}"
         type_info += ")"
         
-        # Get parameter description and format HTML lists properly
-        description = get_element_text_content(param_element)
+        # Get parameter description and handle lists specially
+        description = get_parameter_description_with_lists(param_element)
         
         return f"- **{name}** {type_info}: {description}"
+    
+    def get_parameter_description_with_lists(param_element):
+        """Get parameter description, properly formatting any lists"""
+        content_parts = []
+        
+        for child in param_element.children:
+            if isinstance(child, NavigableString):
+                text = str(child).strip()
+                if text:
+                    content_parts.append(text)
+            elif isinstance(child, Tag):
+                if child.name in ['ul', 'ol']:
+                    # Process list specially for parameter descriptions
+                    list_items = []
+                    for li in child.find_all('li', recursive=False):
+                        item_text = li.get_text(strip=True)
+                        list_items.append(f"    - {item_text}")
+                    
+                    if list_items:
+                        # Add a newline before the list and join items
+                        list_content = '\n' + '\n'.join(list_items)
+                        content_parts.append(list_content)
+                else:
+                    # Handle other tags normally
+                    child_text = child.get_text(strip=True)
+                    if child_text:
+                        content_parts.append(child_text)
+        
+        return ''.join(content_parts)
     
     def process_parameter_list_parsed(param_list):
         """Process a ParameterList element with proper nesting"""
@@ -307,14 +336,21 @@ def resolve_rest_api_layout(text):
         # Get description (text content that's not in nested parameter tags)
         description = get_direct_text_content(param_element)
         
+        # Build parameter type info with possible values if present
+        type_info = f"({param_type}"
+        if possible_values:
+            # Split values and wrap each in backticks
+            values_list = [f"`{val.strip()}`" for val in possible_values.split(',')]
+            values_str = ', '.join(values_list)
+            type_info += f", possible values: {values_str}"
+        type_info += ")"
+        
         # Build parameter line
-        param_line = f"{indent}- **{name}** ({param_type}): {description}"
+        param_line = f"{indent}- **{name}** {type_info}: {description}"
         result_lines.append(param_line)
         
-        # Add possible values if present
-        if possible_values:
-            result_lines.append('')
-            result_lines.append(f"{indent}  > **Possible values:** {possible_values}")
+        # Note: We no longer add possible values as a separate blockquote
+        # since they're now in the parameter header
         
         # Process nested parameters
         nested_params = param_element.find_all('parameter', recursive=False)
@@ -330,10 +366,20 @@ def resolve_rest_api_layout(text):
         
         for child in element.children:
             if isinstance(child, NavigableString):
-                text_parts.append(str(child).strip())
+                text_content = str(child).strip()
+                if text_content:
+                    text_parts.append(text_content)
             elif isinstance(child, Tag) and child.name != 'parameter':
                 # Include content from non-parameter tags
-                text_parts.append(get_element_text_content(child))
+                if child.name in ['ul', 'ol']:
+                    # Special handling for lists
+                    list_content = process_list_element(child)
+                    if list_content:
+                        text_parts.append(list_content)
+                else:
+                    child_content = get_element_text_content(child)
+                    if child_content:
+                        text_parts.append(child_content)
         
         return ' '.join(text_parts).strip()
     
@@ -345,19 +391,48 @@ def resolve_rest_api_layout(text):
             # Handle specific tags differently
             if element.name in ['ul', 'ol']:
                 return process_list_element(element)
+            elif element.name == 'li':
+                # Handle individual list items
+                return f"- {element.get_text(strip=True)}"
             else:
-                return element.get_text(strip=True)
+                # For other elements, check if they contain lists
+                if element.find(['ul', 'ol']):
+                    return process_mixed_content_with_lists(element)
+                else:
+                    return element.get_text(strip=True)
         else:
             return ''
     
     def process_list_element(list_element):
         """Convert HTML lists to markdown format with proper spacing"""
         items = []
-        for li in list_element.find_all('li'):
+        for li in list_element.find_all('li', recursive=False):  # Only direct children
             item_text = li.get_text(strip=True)
-            items.append(f"\n    - {item_text}")
-        # Add extra spacing after the list
-        return ''.join(items) + '\n'
+            items.append(f"    - {item_text}")  # 4 spaces for proper indentation
+        
+        if items:
+            return '\n' + '\n'.join(items)  # Start with newline, separate each item
+        return ''
+    
+    def process_mixed_content_with_lists(element):
+        """Process elements that contain both text and lists"""
+        result_parts = []
+        
+        for child in element.children:
+            if isinstance(child, NavigableString):
+                text = str(child).strip()
+                if text:
+                    result_parts.append(text)
+            elif isinstance(child, Tag):
+                if child.name in ['ul', 'ol']:
+                    list_content = process_list_element(child)
+                    result_parts.append(list_content)
+                else:
+                    child_text = child.get_text(strip=True)
+                    if child_text:
+                        result_parts.append(child_text)
+        
+        return ' '.join(result_parts)
     
     def process_right_column_parsed(right_column):
         """Process RightColumn content"""
