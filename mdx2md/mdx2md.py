@@ -5,6 +5,7 @@ import argparse
 import sys
 import json
 import yaml
+import urllib.parse
 from datetime import datetime
 from bs4 import BeautifulSoup, NavigableString
 
@@ -18,6 +19,7 @@ parser.add_argument('--platform', type=str, help='Target platform: android|elect
 parser.add_argument('--product', type=str, help='Agora product: video-calling|interactive-live-streaming|etc.')
 parser.add_argument('--mdxPath', type=str, help='The absolute path to the mdx file')
 parser.add_argument('--output-file', type=str, help='Explicit output filename (including .md)')
+parser.add_argument('--docs-folder', type=str, help='Path to the Docs root folder')
 
 # Access the values of the named arguments
 args = parser.parse_args()
@@ -130,6 +132,24 @@ def createDictionary(path):
             raise
     
     return data
+
+def remove_react_comments(text):
+    """
+    Remove React-style comments {/* ... */} from MDX content.
+    Handles both single-line and multi-line comments.
+    """
+    # Pattern to match {/* ... */} comments
+    # Uses non-greedy matching to handle multiple comments on same line
+    react_comment_pattern = re.compile(r'\{\s*/\*.*?\*/\s*\}', re.DOTALL)
+    
+    # Remove all React comments
+    cleaned_text = react_comment_pattern.sub('', text)
+    
+    # Clean up any extra whitespace left behind
+    # Remove empty lines that might have been created
+    cleaned_text = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_text)
+    
+    return cleaned_text
 
 # Use the product and platform dictionaries to resolve <Vpd> and <Vpl> tags
 def resolve_local_variables(text, product, productDictionary, platform, platformDictionary):
@@ -1007,21 +1027,22 @@ def resolve_tabs(text):
         # Convert each TabItem to markdown
         result = []
         for attributes, content in tabitems:
-            # Extract value and label from attributes
+            # Extract value and label
             value_match = re.search(r'value\s*=\s*["\']([^"\']*)["\']', attributes)
             label_match = re.search(r'label\s*=\s*["\']([^"\']*)["\']', attributes)
             
             value = value_match.group(1) if value_match else None
             label = label_match.group(1) if label_match else None
-            
-            # Use label as header, fallback to value if label is empty, then to 'Tab'
             header = label if label else (value if value else 'Tab')
             
-            # Add header as bold text
+            # Add header
             result.append(f'**{header}**')
-            # Add the content (strip leading/trailing whitespace)
-            result.append(content.strip())
-            result.append('')  # Add empty line for spacing
+            
+            # Preserve indentation, only trim leading/trailing blank lines
+            content = re.sub(r'^\s*\n', '', content)
+            content = re.sub(r'\n\s*$', '', content)
+            result.append(content)
+            result.append('')  # spacing
         
         # Create replacement text
         replacement = '\n'.join(result).rstrip() + '\n' if result else ''
@@ -1080,22 +1101,18 @@ def resolve_details(text):
     
     return text
 
+import re
+
+import re
+
+import re
+
 def resolve_admonitions(text):
     """
-    Convert Admonition components to markdown blockquote format.
-    <Admonition type="info" title="Custom Title">
-      Content
-    </Admonition>
-    becomes:
-    > ℹ️ **Custom Title**
-    > Content
-    
-    or if no title:
-    > ℹ️ **Info**
-    > Content
+    Convert <Admonition> tags to markdown blockquotes.
+    Ensures there is never a blank line between the header and the first content line.
     """
-    
-    # Map admonition types to emojis and default titles
+
     admonition_types = {
         'note': ('📝', 'Note'),
         'tip': ('💡', 'Tip'),
@@ -1106,44 +1123,46 @@ def resolve_admonitions(text):
         'important': ('❗', 'Important'),
         'success': ('✅', 'Success'),
     }
-    
-    # Pattern to match Admonition blocks
+
     admonition_pattern = re.compile(
-        r'<Admonition\s+([^>]*?)>(.*?)</Admonition>',
+        r'^(\s*)<Admonition\s+([^>]*?)>(.*?)</Admonition>',
         re.MULTILINE | re.DOTALL
     )
-    
+
     def process_admonition(match):
-        attributes = match.group(1)
-        content = match.group(2).strip()
-        
-        # Extract type and title attributes
-        type_match = re.search(r'type\s*=\s*["\']([^"\']*)["\']', attributes)
-        title_match = re.search(r'title\s*=\s*["\']([^"\']*)["\']', attributes)
-        
+        original_indent = match.group(1)
+        attributes = match.group(2)
+        raw_content = match.group(3)
+
+        type_match = re.search(r'type\s*=\s*["\']([^"\']+)["\']', attributes)
+        title_match = re.search(r'title\s*=\s*["\']([^"\']+)["\']', attributes)
+
         admonition_type = type_match.group(1).lower() if type_match else 'note'
         custom_title = title_match.group(1) if title_match else None
-        
-        # Get emoji and default title for the type
+
         emoji, default_title = admonition_types.get(admonition_type, ('📝', 'Note'))
-        
-        # Use custom title if provided, otherwise use default
         title = custom_title if custom_title else default_title
-        
-        # Create markdown blockquote format
-        # Split content into lines and add > prefix to each
-        lines = content.split('\n')
-        quoted_lines = [f'> {line}' if line.strip() else '>' for line in lines]
-        
-        # Add the title line with emoji
-        result = f'> {emoji} **{title}**\n' + '\n'.join(quoted_lines)
-        
+
+        # Split lines of content while preserving indentation
+        content_lines = [line.rstrip() for line in raw_content.strip().splitlines()]
+
+        # Build the admonition block
+        result_lines = [f'{original_indent}> {emoji} **{title}**']
+        for line in content_lines:
+            if line.strip():
+                result_lines.append(f'{original_indent}> {line}')
+            else:
+                result_lines.append(f'{original_indent}>')
+
+        result = "\n".join(result_lines)
+
+        result = re.sub(r"^(.*?)\n\s*\n", r"\1\n", result, flags=re.DOTALL)
+
+
+
         return result
-    
-    # Replace all Admonition blocks
-    text = admonition_pattern.sub(process_admonition, text)
-    
-    return text
+
+    return admonition_pattern.sub(process_admonition, text)
 
 def remove_imports_outside_codeblocks(text):
     """
@@ -1192,46 +1211,6 @@ def remove_imports_outside_codeblocks(text):
         current_pos += len(line) + 1  # +1 for the newline character
     
     return '\n'.join(result_lines)
-
-def resolve_images(text):
-    # Find all matches of the image link pattern
-    matches = re.findall(r'!\[.*?\]\((.+?)\)', text)
-
-    if matches:
-        # create the images directory if it doesn't exist
-        if not os.path.exists('./output/images'):
-            os.makedirs('./output/images')
-
-    # Copy each image to the ./images folder and update the paths
-    for match in matches:
-        if match.startswith('http') or match.startswith('https'):
-            continue
-        # Get the filename from the path
-        filename = match.split('/')[-1]
-        # Copy the file to the ./images folder
-        try:
-            shutil.copyfile(assetsPath + match, f'./output/images/{filename}')
-            # Update the path in the markdown file
-            text = re.sub(re.escape(match), f'./images/{filename}', text)
-        except FileNotFoundError:
-            print(f"Warning: Image file not found: {assetsPath + match}")
-
-    return text
-
-def resolve_link_tags(text):
-    # Resolve <Link to="">name</Link> tags
-    pattern = re.compile(r'<Link\s+to=\"\{\{(?:[Gg]lobal?|GLOBAL)\.*([^\"]+)}}([^\"]*)\"\s*>(.*?)</Link>')
-    def replace(match):
-        url_key = match.group(1)
-        url = globalVariables.get(url_key)
-        if url is None:
-            print(f"Warning: Unknown URL key: {url_key}")
-            return match.group(0)  # Return original if key not found
-        link = match.group(2)
-        name = match.group(3)
-        return f'<a href="{url}{link}">{name}</a>'
-
-    return pattern.sub(replace, text)
 
 def resolve_hyperlinks(text, base_folder, http_url):
     # Find all links in the text
@@ -1316,6 +1295,144 @@ def resolve_codeblocks(text):
 
     return text
 
+def resolve_links_and_images(text, base_folder, docs_folder, original_base_url="https://docs.agora.io/en", new_base_url="https://docs-md.agora.io/en", assets_path="https://docs-md.agora.io"):
+    """
+    Consolidated function to process both images and links in markdown text.
+    """
+    
+    # Create images directory if it doesn't exist
+    if not os.path.exists('./output/images'):
+        os.makedirs('./output/images')
+    
+    # Build path to docs assets folder using the docs_folder parameter
+    docs_assets_path = os.path.join(docs_folder, 'docs', 'assets')
+    
+    # First, process <Link> tags with global variables
+    link_tag_pattern = re.compile(r'<Link\s+to=\"\{\{(?:[Gg]lobal?|GLOBAL)\.([^\"]+)}}([^\"]*)\"\s*>(.*?)</Link>')
+
+    def convert_internal_link(link_text, docs_url):
+        """Convert internal docs.agora.io URLs to markdown file URLs"""
+        try:
+            parsed_url = urllib.parse.urlparse(docs_url)
+            path = parsed_url.path
+            if path.startswith('/en/'):
+                path = path[4:]
+            elif path.startswith('/en'):
+                path = path[3:]
+            
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            platform = None
+            if 'platform' in query_params:
+                platform = query_params['platform'][0]
+            
+            if platform:
+                new_path = f"{path}_{platform}.md"
+            else:
+                new_path = f"{path}.md"
+            
+            if not new_path.startswith('/'):
+                new_path = '/' + new_path
+            
+            final_url = f"{new_base_url}{new_path}"
+            return f'[{link_text}]({final_url})'
+            
+        except Exception as e:
+            print(f"Warning: Error converting internal link {docs_url}: {e}")
+            return f'[{link_text}]({docs_url})'
+
+    def process_link_tag(match):
+        url_key = match.group(1)
+        additional_path = match.group(2)
+        name = match.group(3)
+        
+        base_url = globalVariables.get(url_key)
+        if base_url is None:
+            print(f"Warning: Unknown URL key: {url_key}")
+            return match.group(0)
+        
+        if base_url and not base_url.startswith(('http://', 'https://')):
+            if base_url.startswith('//'):
+                base_url = 'https:' + base_url
+            else:
+                base_url = 'https://' + base_url
+        
+        full_url = f"{base_url}{additional_path}"
+        
+        if full_url.startswith(original_base_url):
+            return convert_internal_link(name, full_url)
+        else:
+            return f'[{name}]({full_url})'
+
+    # Process <Link> tags first
+    text = link_tag_pattern.sub(process_link_tag, text)
+
+    # Define helper functions for markdown links
+    def process_image_link(alt_text, image_url):
+        """Process image links - copy local images and update paths"""
+        if image_url.startswith(('http://', 'https://', '#')):
+            return f'![{alt_text}]({image_url})'
+        
+        try:
+            filename = image_url.split('/')[-1]
+            clean_image_path = image_url.lstrip('/')
+            
+            destination_dir = os.path.join('./output', os.path.dirname(clean_image_path))
+            os.makedirs(destination_dir, exist_ok=True)
+            
+            source_path = docs_assets_path + image_url
+            destination_path = os.path.join('./output', clean_image_path)
+            shutil.copyfile(source_path, destination_path)
+            
+            if assets_path == ".":
+                image_url_output = clean_image_path
+            else:
+                image_url_output = f"{assets_path}/{clean_image_path}"
+            
+            return f'![{alt_text}]({image_url_output})'
+            
+        except FileNotFoundError:
+            print(f"Warning: Image file not found: {source_path}")
+            return f'![{alt_text}]({image_url})'
+        except Exception as e:
+            print(f"Warning: Error processing image {image_url}: {e}")
+            return f'![{alt_text}]({image_url})'
+    
+    def process_text_link(link_text, link_url):
+        """Process text links - convert internal docs links to markdown format"""
+        if link_url.startswith('#'):
+            return f'[{link_text}]({link_url})'
+        
+        if link_url.startswith('.'):
+            resolved_path = os.path.abspath(os.path.join(base_folder, link_url))
+            rel_path = os.path.relpath(resolved_path, docsPath)
+            rel_path = rel_path.replace('\\', '/')
+            link_url = f'{original_base_url}/{rel_path}'
+        elif not link_url.startswith(('http://', 'https://')):
+            link_url = f'{original_base_url}/{link_url}'
+        
+        link_url = re.sub(r'(?<!:)//+', '/', link_url)
+        
+        if link_url.startswith(original_base_url):
+            return convert_internal_link(link_text, link_url)
+        
+        return f'[{link_text}]({link_url})'
+
+    def process_link(match):
+        is_image = match.group(1) == '!'
+        alt_or_text = match.group(2)
+        url = match.group(3)
+        
+        if is_image:
+            return process_image_link(alt_or_text, url)
+        else:
+            return process_text_link(alt_or_text, url)
+    
+    # Process all markdown links and images
+    link_pattern = r'(!?)\[([^\]]*)\]\(([^)]+)\)'
+    processed_text = re.sub(link_pattern, process_link, text)
+    
+    return processed_text
+
 def add_frontmatter(content, source_file, platform="flutter", exported_from=None, output_file=None):
     """
     Keeps original frontmatter (title, description, sidebar_position, etc.),
@@ -1387,6 +1504,9 @@ try:
     # Also resolves PlatformWrapper and ProductWrapper tags
     mdxContents = resolve_imports(mdxPath)
     
+    # Remove React comments
+    mdxContents = remove_react_comments(mdxContents)
+
     # Replace global variables <Vg k="KEY" /> using the dictionary
     regex_pattern = r'<Vg\s+k\s*=\s*"(\w+)"\s*\/?>'
     mdxContents = re.sub(regex_pattern, lambda match: globalVariables.get(match.group(1), match.group(0)), mdxContents)
@@ -1428,13 +1548,9 @@ try:
     # Remove extra line breaks
     mdxContents = re.sub(r'\n([\s\t]*\n){3,}', r'\n\n', mdxContents)
 
-    # Copy images and update image links
-    mdxContents = resolve_images(mdxContents)
-
-    # Update hyperlinks
-    mdxContents = resolve_link_tags(mdxContents)
+    # Update hyperlinks and images
     docFolder = os.path.dirname(mdxPath)
-    mdxContents = resolve_hyperlinks(mdxContents, docFolder, siteBaseUrl)
+    mdxContents = resolve_links_and_images(mdxContents, docFolder, args.docs_folder)
 
     # Add frontmatter
     normalized_path = mdxPath.replace(os.sep, "/")
