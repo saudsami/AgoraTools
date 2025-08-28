@@ -6,6 +6,7 @@ import sys
 import json
 import yaml
 import urllib.parse
+import textwrap
 from datetime import datetime
 from bs4 import BeautifulSoup, NavigableString
 
@@ -989,79 +990,89 @@ def resolve_header(content):
 
     return content[:fm_match.end()] + body if fm_match else body
 
+import re
+
 def resolve_tabs(text):
     """
     Convert Tabs and TabItem components to markdown format.
-    <Tabs>
-      <TabItem value="..." label="Header">Content</TabItem>
-    </Tabs>
-    becomes:
-    **Header**
-    Content
+    Ensures tab headers align properly with the Tabs block indentation.
     """
-    
-    # Keep processing until no more Tabs blocks are found
+
+    def find_tabs_base_indent(match):
+        """Find the base indentation of the Tabs block"""
+        match_start = match.start()
+        line_start = text.rfind('\n', 0, match_start) + 1
+        tabs_line = text[line_start:match_start]
+        indent_match = re.match(r'^(\s*)', tabs_line)
+        return indent_match.group(1) if indent_match else ''
+
+    def normalize_tabitem_to_tabs_level(content, base_indent):
+        """If TabItem content is more indented than Tabs, bring it back to Tabs level"""
+        lines = content.split('\n')
+        if not lines:
+            return content
+
+        # Find first non-empty line indent
+        tabitem_indent = ''
+        for line in lines:
+            if line.strip():
+                tabitem_indent = re.match(r'^(\s*)', line).group(1)
+                break
+
+        # Normalize indentation if deeper than Tabs
+        if len(tabitem_indent) > len(base_indent):
+            excess_indent = len(tabitem_indent) - len(base_indent)
+            normalized_lines = []
+            for line in lines:
+                if line.startswith(' ' * excess_indent):
+                    normalized_lines.append(line[excess_indent:])
+                else:
+                    normalized_lines.append(line.lstrip())
+            return '\n'.join(normalized_lines)
+        return content
+
     while '<Tabs' in text:
-        # Pattern to match the entire Tabs block including all TabItems
-        tabs_pattern = re.compile(
-            r'<Tabs[^>]*?>(.*?)</Tabs>',
-            re.MULTILINE | re.DOTALL
-        )
-        
+        tabs_pattern = re.compile(r'<Tabs[^>]*?>(.*?)</Tabs>', re.DOTALL)
         match = tabs_pattern.search(text)
         if not match:
-            # No complete Tabs block found, break
             break
-            
+
         tabs_content = match.group(1)
-        
-        # Pattern to match individual TabItem components
-        tabitem_pattern = re.compile(
-            r'<TabItem\s+([^>]*?)>(.*?)</TabItem>',
-            re.MULTILINE | re.DOTALL
-        )
-        
-        # Extract all TabItems
+        base_indent = find_tabs_base_indent(match)
+
+        tabitem_pattern = re.compile(r'<TabItem\s+([^>]*?)>(.*?)</TabItem>', re.DOTALL)
         tabitems = tabitem_pattern.findall(tabs_content)
-        
-        # Convert each TabItem to markdown
+
         result = []
-        for attributes, content in tabitems:
-            # Extract value and label
-            value_match = re.search(r'value\s*=\s*["\']([^"\']*)["\']', attributes)
-            label_match = re.search(r'label\s*=\s*["\']([^"\']*)["\']', attributes)
-            
-            value = value_match.group(1) if value_match else None
-            label = label_match.group(1) if label_match else None
-            header = label if label else (value if value else 'Tab')
-            
-            # Add header
-            result.append(f'**{header}**')
-            
-            # Preserve indentation, only trim leading/trailing blank lines
-            content = re.sub(r'^\s*\n', '', content)
-            content = re.sub(r'\n\s*$', '', content)
-            result.append(content)
-            result.append('')  # spacing
+        for i, (attributes, content) in enumerate(tabitems):
+            value = re.search(r'value\s*=\s*["\']([^"\']*)["\']', attributes)
+            label = re.search(r'label\s*=\s*["\']([^"\']*)["\']', attributes)
+            header = (label.group(1) if label else (value.group(1) if value else 'Tab'))
+
+            normalized_content = normalize_tabitem_to_tabs_level(content, base_indent)
+            normalized_content = re.sub(r'^\s*\n', '', normalized_content)
+            normalized_content = re.sub(r'\n\s*$', '', normalized_content)
+
+            # First header: no indent, later headers: base_indent
+            header_prefix = '' if i == 0 else base_indent
+
+            result.append(f'{header_prefix}**{header}**')
+            if normalized_content.strip():
+                result.append(normalized_content)
+            result.append('')
+
+        replacement = '\n'.join(result).rstrip() + '\n'
         
-        # Create replacement text
-        replacement = '\n'.join(result).rstrip() + '\n' if result else ''
-        
-        # Replace the entire matched Tabs block with the markdown version
         text = text[:match.start()] + replacement + text[match.end():]
-    
-    # Clean up any orphaned TabItem tags that aren't inside Tabs blocks
-    # These might be left over from incomplete structures or parsing errors
-    
-    # Remove standalone TabItem opening and closing tags
+
+    # Clean up any remaining tags
     text = re.sub(r'<TabItem\s+[^>]*?>', '', text)
     text = re.sub(r'</TabItem>', '', text)
-    
-    # Remove any remaining Tabs tags (opening or closing)
     text = re.sub(r'<Tabs[^>]*?>', '', text)
     text = re.sub(r'</Tabs>', '', text)
-    
+
     return text
+
 
 def resolve_details(text):
     """
@@ -1241,41 +1252,34 @@ def resolve_hyperlinks(text, base_folder, http_url):
 
 def resolve_codeblocks(text):
     """
-    Convert CodeBlock components to markdown code blocks.
-    Handles both:
-    <CodeBlock language="dart">{`code here`}</CodeBlock>
-    and
-    <CodeBlock language="dart">code here</CodeBlock>
-
-
-    Output:
-    ```dart
-    code here
-    ```
+    Convert CodeBlock components to markdown code blocks with proper indentation and whitespace preservation.
     """
-
-
-    # Pattern for {`code`} style
+    
+    # More precise patterns that preserve whitespace
     codeblock_pattern_wrapped = re.compile(
-    r'<CodeBlock\s+([^>]*?)>\s*\{`(.*?)`}\s*</CodeBlock>',
-    re.MULTILINE | re.DOTALL
+        r'<CodeBlock\s+([^>]*?)>\s*\{\`(.*?)\`\}\s*</CodeBlock>',
+        re.MULTILINE | re.DOTALL
     )
 
-
-    # Pattern for raw code style (no {` `})
     codeblock_pattern_raw = re.compile(
-    r'<CodeBlock\s*([^>]*?)>(.*?)</CodeBlock>',
-    re.MULTILINE | re.DOTALL
+        r'<CodeBlock\s*([^>]*?)>(.*?)</CodeBlock>',
+        re.MULTILINE | re.DOTALL
     )
 
-
-    def process_codeblock(attributes, code_content):
+    def replace_wrapped_codeblock(match):
+        # Extract from wrapped pattern
+        match_start = match.start()
+        line_start = text.rfind('\n', 0, match_start) + 1
+        line_before_match = text[line_start:match_start]
+        
+        attributes = match.group(1)
+        code_content = match.group(2)  # This should preserve whitespace
+        
         # Extract language
         language_match = re.search(r'language\s*=\s*["\']([^"\']*)["\']', attributes)
         language = language_match.group(1) if language_match else ''
 
-
-        # Unescape characters if wrapped
+        # Unescape characters but preserve whitespace structure
         code_content = code_content.replace('\\\\', '\\')
         code_content = code_content.replace('\\n', '\n')
         code_content = code_content.replace('\\t', '\t')
@@ -1284,14 +1288,63 @@ def resolve_codeblocks(text):
         code_content = code_content.replace("\\'", "'")
         code_content = code_content.replace('\\`', '`')
 
-        return f'```{language}\n{code_content.strip()}\n```'
+        # Apply base indentation to each line while preserving internal indentation
+        lines = code_content.split('\n')
+        
+        # Remove leading/trailing empty lines
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        
+        # Add base indentation to each line
+        indented_lines = []
+        for line in lines:
+            indented_lines.append(line_before_match + line)
+        
+        indented_content = '\n'.join(indented_lines)
+        
+        return f'```{language}\n{indented_content}\n{line_before_match}```'
 
-    # First handle wrapped {` `}
-    text = codeblock_pattern_wrapped.sub(lambda m: process_codeblock(m.group(1), m.group(2)), text)
+    def replace_raw_codeblock(match):
+        # Extract from raw pattern  
+        match_start = match.start()
+        line_start = text.rfind('\n', 0, match_start) + 1
+        line_before_match = text[line_start:match_start]
+        
+        attributes = match.group(1)
+        code_content = match.group(2)
+        
+        # Extract language and process similar to wrapped version
+        language_match = re.search(r'language\s*=\s*["\']([^"\']*)["\']', attributes)
+        language = language_match.group(1) if language_match else ''
 
+        # Similar processing as wrapped version
+        code_content = code_content.replace('\\\\', '\\')
+        code_content = code_content.replace('\\n', '\n')
+        code_content = code_content.replace('\\t', '\t')
+        code_content = code_content.replace('\\r', '\r')
+        code_content = code_content.replace('\\"', '"')
+        code_content = code_content.replace("\\'", "'")
+        code_content = code_content.replace('\\`', '`')
 
-    # Then handle raw blocks
-    text = codeblock_pattern_raw.sub(lambda m: process_codeblock(m.group(1), m.group(2)), text)
+        lines = code_content.split('\n')
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        
+        indented_lines = []
+        for line in lines:
+            indented_lines.append(line_before_match + line)
+        
+        indented_content = '\n'.join(indented_lines)
+        
+        return f'```{language}\n{indented_content}\n{line_before_match}```'
+
+    # Apply both patterns
+    text = codeblock_pattern_wrapped.sub(replace_wrapped_codeblock, text)
+    text = codeblock_pattern_raw.sub(replace_raw_codeblock, text)
 
     return text
 
@@ -1503,7 +1556,7 @@ try:
     # Resolve import statements 
     # Also resolves PlatformWrapper and ProductWrapper tags
     mdxContents = resolve_imports(mdxPath)
-    
+
     # Remove React comments
     mdxContents = remove_react_comments(mdxContents)
 
@@ -1529,22 +1582,23 @@ try:
     # Resolve Tabs components to markdown
     mdxContents = resolve_tabs(mdxContents)
     
+    # Resolve CodeBlock components to markdown fenced code blocks
+    mdxContents = resolve_codeblocks(mdxContents)
+
     # Resolve details/summary components to markdown
     mdxContents = resolve_details(mdxContents)
     
     # Resolve Admonition components to markdown blockquotes
     mdxContents = resolve_admonitions(mdxContents)
 
-    # Resolve CodeBlock components to markdown fenced code blocks
-    mdxContents = resolve_codeblocks(mdxContents)
-
     # Remove import statements that are outside code blocks
     mdxContents = remove_imports_outside_codeblocks(mdxContents)
 
     # Apply final cleanup of platform and product tags (in case any were missed)
     mdxContents = resolve_all_platform_tags(mdxContents, platform)
+    
     mdxContents = resolve_all_product_tags(mdxContents, product)
-
+    
     # Remove extra line breaks
     mdxContents = re.sub(r'\n([\s\t]*\n){3,}', r'\n\n', mdxContents)
 
