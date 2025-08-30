@@ -990,8 +990,6 @@ def resolve_header(content):
 
     return content[:fm_match.end()] + body if fm_match else body
 
-import re
-
 def resolve_tabs(text):
     """
     Convert Tabs and TabItem components to markdown format.
@@ -1112,16 +1110,10 @@ def resolve_details(text):
     
     return text
 
-import re
-
-import re
-
-import re
-
 def resolve_admonitions(text):
     """
     Convert <Admonition> tags to markdown blockquotes.
-    Ensures there is never a blank line between the header and the first content line.
+    Removes blank lines so markdown renders cleanly.
     """
 
     admonition_types = {
@@ -1154,22 +1146,17 @@ def resolve_admonitions(text):
         emoji, default_title = admonition_types.get(admonition_type, ('📝', 'Note'))
         title = custom_title if custom_title else default_title
 
-        # Split lines of content while preserving indentation
         content_lines = [line.rstrip() for line in raw_content.strip().splitlines()]
 
-        # Build the admonition block
         result_lines = [f'{original_indent}> {emoji} **{title}**']
         for line in content_lines:
-            if line.strip():
-                result_lines.append(f'{original_indent}> {line}')
-            else:
-                result_lines.append(f'{original_indent}>')
+            result_lines.append(f'{original_indent}> {line}' if line.strip() else f'{original_indent}>')
 
         result = "\n".join(result_lines)
 
-        result = re.sub(r"^(.*?)\n\s*\n", r"\1\n", result, flags=re.DOTALL)
-
-
+        # 🔑 cleanup: remove quote-only blank lines and stray empty lines
+        result = re.sub(r'(?m)^>\s*$', '', result)         # remove ">" only lines
+        result = re.sub(r"\n\s*\n", "\n", result)          # collapse blank lines
 
         return result
 
@@ -1490,6 +1477,7 @@ def add_frontmatter(content, source_file, platform="flutter", exported_from=None
     """
     Keeps original frontmatter (title, description, sidebar_position, etc.),
     and appends/updates platform, exported_from, and exported_on.
+    Also adds a link to the HTML version at the top of the content.
     """
     exported_on = datetime.utcnow().isoformat() + "Z"
 
@@ -1520,7 +1508,13 @@ def add_frontmatter(content, source_file, platform="flutter", exported_from=None
     new_fm.update(fm_dict)
 
     new_frontmatter = "---\n" + yaml.safe_dump(new_fm, sort_keys=False).strip() + "\n---\n\n"
-    return new_frontmatter + body
+    
+    # Add HTML version link if exported_from is available
+    html_version_link = ""
+    if exported_from:
+        html_version_link = f"[HTML Version]({exported_from})\n\n"
+    
+    return new_frontmatter + html_version_link + body
 
 # -----Main------
 
@@ -1615,6 +1609,10 @@ try:
     else:
         relative_path = os.path.basename(normalized_path)
 
+    # Remove .mdx extension if present
+    if relative_path.endswith('.mdx'):
+        relative_path = relative_path[:-4]
+
     exported_from = f"https://docs.agora.io/en/{relative_path}"
     if platform:
         exported_from += f"?platform={platform}"
@@ -1659,5 +1657,8 @@ try:
     print(f"Successfully converted {output_path}")
     
 except Exception as e:
+    import traceback
     print(f"Error processing file: {e}")
+    print("Full traceback:")
+    traceback.print_exc()
     sys.exit(-3)
