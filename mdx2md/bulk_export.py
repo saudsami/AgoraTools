@@ -43,15 +43,47 @@ def should_skip(path):
     return any(p in skip_folders for p in parts)
 
 
-def run_mdx2md(mdx_file, platform, output_file, docs_folder):
-    """Run mdx2md.py for a given platform/output_file"""
+def run_mdx2md(mdx_file, platform, output_file, docs_folder, failed_exports):
+    """Run mdx2md.py for a given platform/output_file with error handling"""
     cmd = ["python", "mdx2md.py", "--mdxPath", mdx_file]
     if platform:
         cmd.extend(["--platform", platform])
     cmd.extend(["--output-file", output_file])
     cmd.extend(["--docs-folder", docs_folder])  # Pass the docs folder
+    
     print("Running:", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        error_info = {
+            'file': mdx_file,
+            'platform': platform,
+            'output': output_file,
+            'command': ' '.join(cmd),
+            'return_code': e.returncode,
+            'stdout': e.stdout if e.stdout else 'No stdout',
+            'stderr': e.stderr if e.stderr else 'No stderr'
+        }
+        failed_exports.append(error_info)
+        print(f"❌ FAILED: {mdx_file} (platform: {platform or 'none'}) - Exit code: {e.returncode}")
+        if e.stderr:
+            print(f"   Error: {e.stderr.strip()[:200]}...")  # Show first 200 chars of error
+        return False
+    except Exception as e:
+        error_info = {
+            'file': mdx_file,
+            'platform': platform,
+            'output': output_file,
+            'command': ' '.join(cmd),
+            'return_code': 'N/A',
+            'stdout': 'N/A',
+            'stderr': str(e)
+        }
+        failed_exports.append(error_info)
+        print(f"❌ FAILED: {mdx_file} (platform: {platform or 'none'}) - Exception: {e}")
+        return False
 
 
 def create_platform_index_file(mdx_file, platforms, output_dir, base_name, docs_folder):
@@ -129,7 +161,36 @@ def get_exported_from_url(mdx_file, docs_folder):
     docs_path = os.path.join(docs_folder, "docs")
     rel_path = os.path.relpath(mdx_file, docs_path)
     normalized_path = rel_path.replace(os.sep, "/")
+    
+    # Remove .mdx extension if present
+    if normalized_path.endswith('.mdx'):
+        normalized_path = normalized_path[:-4]
+    
     return f"https://docs.agora.io/en/{normalized_path}"
+
+
+def write_error_log(failed_exports, output_base):
+    """Write detailed error log to file"""
+    if not failed_exports:
+        return
+    
+    log_file = os.path.join(output_base, "export_errors.log")
+    with open(log_file, 'w', encoding='utf-8') as f:
+        f.write(f"Export Error Log - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("=" * 80 + "\n\n")
+        
+        for i, error in enumerate(failed_exports, 1):
+            f.write(f"Error #{i}:\n")
+            f.write(f"  File: {error['file']}\n")
+            f.write(f"  Platform: {error['platform'] or 'none'}\n")
+            f.write(f"  Output: {error['output']}\n")
+            f.write(f"  Return Code: {error['return_code']}\n")
+            f.write(f"  Command: {error['command']}\n")
+            f.write(f"  STDOUT: {error['stdout']}\n")
+            f.write(f"  STDERR: {error['stderr']}\n")
+            f.write("-" * 40 + "\n\n")
+    
+    print(f"📋 Detailed error log written to: {log_file}")
 
 
 # --- Main ---
@@ -155,6 +216,11 @@ def main():
         action="store_true",
         help="Skip creating platform index files (only create platform-specific files)"
     )
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Continue processing even when individual exports fail (default behavior)"
+    )
     args = parser.parse_args()
 
     docs_folder = os.path.abspath(args.docs_folder)
@@ -167,13 +233,19 @@ def main():
     start_path = os.path.join(docs_folder, "docs", args.start_folder)
 
     product_platforms = load_product_platforms(products_file)
+    
+    # Track failures
+    failed_exports = []
+    
     print(f"Loaded product → platforms mapping from {products_file}")
     print(f"Starting export from: {start_path}")
     print(f"Output directory: {output_base}")
     print(f"Platform index creation: {'Disabled' if args.skip_platform_index else 'Enabled'}")
+    print(f"Continue on error: {'Enabled' if args.continue_on_error else 'Enabled (default)'}")
     print("-" * 60)
 
     processed_files = 0
+    successful_exports = 0
     index_files_created = 0
 
     for root, _, files in os.walk(start_path):
@@ -210,29 +282,56 @@ def main():
             if not platform_selector:
                 # Single export only
                 output_file = os.path.join(output_dir, f"{base_name}.md")
-                run_mdx2md(mdx_file, None, output_file, docs_folder)
                 processed_files += 1
+                if run_mdx2md(mdx_file, None, output_file, docs_folder, failed_exports):
+                    successful_exports += 1
             else:
                 # Export once per platform (except excluded)
                 exported_platforms = []
+                successful_platforms = []
+                
                 for p in platforms:
                     if p in excluded:
                         print(f"  └─ Skipping {p} (excluded)")
                         continue
+                    
                     output_file = os.path.join(output_dir, f"{base_name}_{p}.md")
-                    run_mdx2md(mdx_file, p, output_file, docs_folder)
-                    exported_platforms.append(p)
                     processed_files += 1
+                    exported_platforms.append(p)
+                    
+                    if run_mdx2md(mdx_file, p, output_file, docs_folder, failed_exports):
+                        successful_exports += 1
+                        successful_platforms.append(p)
 
-                # Create platform index file if multiple platforms were exported
-                if not args.skip_platform_index and len(exported_platforms) > 1:
-                    if create_platform_index_file(mdx_file, exported_platforms, output_dir, base_name, docs_folder):
+                # Create platform index file only for successfully exported platforms
+                if not args.skip_platform_index and len(successful_platforms) > 1:
+                    if create_platform_index_file(mdx_file, successful_platforms, output_dir, base_name, docs_folder):
                         index_files_created += 1
 
+    # Write detailed error log
+    write_error_log(failed_exports, output_base)
+
     print("-" * 60)
-    print(f"✅ Export completed!")
-    print(f"   📄 Processed files: {processed_files}")
+    print("📊 Export Summary:")
+    print(f"   📄 Total exports attempted: {processed_files}")
+    print(f"   ✅ Successful exports: {successful_exports}")
+    print(f"   ❌ Failed exports: {len(failed_exports)}")
     print(f"   📑 Platform index files created: {index_files_created}")
+    
+    if failed_exports:
+        print("\n❌ Failed Exports:")
+        for error in failed_exports:
+            platform_info = f" (platform: {error['platform']})" if error['platform'] else ""
+            print(f"   • {os.path.basename(error['file'])}{platform_info}")
+        
+        print(f"\n📋 See export_errors.log in {output_base} for detailed error information")
+        print("🔧 Common fixes:")
+        print("   • Check if product/platform dictionaries are missing keys")
+        print("   • Verify all imported .mdx files exist")
+        print("   • Check for syntax errors in MDX files")
+        print("   • Ensure all required assets/images are available")
+    else:
+        print("\n🎉 All exports completed successfully!")
 
 
 if __name__ == "__main__":
