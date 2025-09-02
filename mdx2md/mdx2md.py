@@ -930,36 +930,168 @@ def resolve_all_product_tags(text, product):
     return text
 
 # Recursively resolve import statements
+def parse_exported_variables(file_path):
+    """
+    Parse exported JavaScript variables from an MDX file.
+    Returns a dictionary of variable names and their values.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        variables = {}
+        
+        # Find export const statements
+        export_pattern = r'export\s+const\s+(\w+)\s*=\s*{([^}]*)};'
+        matches = re.findall(export_pattern, content, re.MULTILINE | re.DOTALL)
+        
+        for var_name, var_content in matches:
+            # Parse the object content
+            obj_dict = {}
+            
+            # Find key-value pairs in the object
+            # Handle both "key": "value" and key: "value" formats
+            prop_pattern = r'(?:(?:"([^"]+)")|(\w+))\s*:\s*(?:(?:"([^"]+)")|{([^}]*)})'
+            prop_matches = re.findall(prop_pattern, var_content)
+            
+            for match in prop_matches:
+                key = match[0] or match[1]  # quoted or unquoted key
+                
+                if match[2]:  # string value
+                    obj_dict[key] = match[2]
+                elif match[3]:  # object value
+                    # Parse nested object
+                    nested_dict = {}
+                    nested_pattern = r'(?:(?:"([^"]+)")|(\w+))\s*:\s*"([^"]+)"'
+                    nested_matches = re.findall(nested_pattern, match[3])
+                    
+                    for nested_match in nested_matches:
+                        nested_key = nested_match[0] or nested_match[1]
+                        nested_value = nested_match[2]
+                        nested_dict[nested_key] = nested_value
+                    
+                    obj_dict[key] = nested_dict
+            
+            variables[var_name] = obj_dict
+        
+        return variables
+        
+    except Exception as e:
+        print(f"Warning: Could not parse variables from {file_path}: {e}")
+        return {}
+
+
+def has_variable_imports(content):
+    """
+    Check if the content contains 'import * as' patterns.
+    Returns True if variable imports are detected.
+    """
+    pattern = r'import\s+\*\s+as\s+\w+\s+from\s+[\'"][^\'\"]+[\'"]'
+    return bool(re.search(pattern, content))
+
+
+def resolve_variable_expressions(content, variables, platform):
+    """
+    Resolve variable expressions like {variable.property[props.ag_platform]} in content.
+    """
+    if not variables:
+        return content
+    
+    # Pattern to match {variable.property[props.ag_platform]} or {variable.property['platform']}
+    pattern = r'\{(\w+)\.(\w+)\[(?:props\.ag_platform|[\'"]([^\'"]+)[\'"])\]\}'
+    
+    def replace_expression(match):
+        var_name = match.group(1)
+        prop_name = match.group(2)
+        explicit_platform = match.group(3)
+        
+        # Use explicit platform if provided, otherwise use the current platform
+        target_platform = explicit_platform or platform
+        
+        if var_name in variables and prop_name in variables[var_name]:
+            prop_obj = variables[var_name][prop_name]
+            if isinstance(prop_obj, dict) and target_platform in prop_obj:
+                return prop_obj[target_platform]
+        
+        # Return original expression if not found
+        return match.group(0)
+    
+    return re.sub(pattern, replace_expression, content)
+
+
+# Enhanced resolve_imports function
 def resolve_imports(mdxFilePath):
+    """
+    Enhanced import resolution that handles both component imports and variable imports.
+    """
     base_dir = os.path.dirname(mdxFilePath)
     with open(rf'{mdxFilePath}', 'r', encoding='utf-8') as file:
         mdxFileContents = file.read()
-        # Use the new comprehensive tag resolvers
+        # Use the comprehensive tag resolvers
         mdxFileContents = resolve_all_platform_tags(mdxFileContents, platform)
         mdxFileContents = resolve_all_product_tags(mdxFileContents, product)
 
-    # Read the import statements
-    matches = re.findall(r'import\s+(\w+?)\s+from\s+\'(.+?md[x]*)\';?\n*', mdxFileContents)
-    if not matches:
+    # Check if this file has variable imports - early detection
+    has_var_imports = has_variable_imports(mdxFileContents)
+    
+    # Read import statements - handle both component and variable imports
+    component_pattern = r'import\s+(\w+?)\s+from\s+\'(.+?md[x]*)\';?\n*'
+    variable_pattern = r'import\s+\*\s+as\s+(\w+)\s+from\s+\'(.+?md[x]*)\';?\n*'
+    
+    component_matches = re.findall(component_pattern, mdxFileContents)
+    variable_matches = re.findall(variable_pattern, mdxFileContents) if has_var_imports else []
+    
+    # If no imports found, return content as-is
+    if not component_matches and not variable_matches:
         return mdxFileContents
     
-    # Delete import statements (consolidated into one pattern)
-    import_pattern = r'import\s+(?:\*[\s\w]*|\w+?)\s+from\s+\'[^\']+\';?\n*'
+    # Store parsed variables for resolution
+    all_variables = {}
+    
+    # Process variable imports first
+    if variable_matches:
+        print(f"Processing variable imports in {os.path.basename(mdxFilePath)}")
+        
+        for var_name, filepath in variable_matches:
+            filepath = filepath.replace('@docs', docsPath)
+            if not os.path.isabs(filepath):
+                filepath = os.path.abspath(os.path.join(base_dir, filepath))
+            
+            # Parse variables from the imported file
+            file_variables = parse_exported_variables(filepath)
+            if file_variables:
+                # Store with the alias name
+                all_variables[var_name] = file_variables
+                print(f"  Loaded variables from {os.path.basename(filepath)}: {list(file_variables.keys())}")
+    
+    # Remove all import statements (both component and variable)
+    import_pattern = r'import\s+(?:\*[\s\w]*as\s+\w+|\w+?)\s+from\s+\'[^\']+\';?\n*'
     mdxFileContents = re.sub(import_pattern, '', mdxFileContents)
     
-    # Replace tags with file content
-    for tag, filepath in matches:
+    # Resolve variable expressions if we have variables
+    if all_variables:
+        # Flatten the nested structure for easier access
+        flattened_vars = {}
+        for alias, vars_dict in all_variables.items():
+            flattened_vars[alias] = vars_dict
+        
+        mdxFileContents = resolve_variable_expressions(mdxFileContents, flattened_vars, platform)
+    
+    # Process component imports (existing logic)
+    for tag, filepath in component_matches:
         filepath = filepath.replace('@docs', docsPath)
         if '/data/variables' in filepath:
             continue
         if not os.path.isabs(filepath):
             filepath = os.path.abspath(os.path.join(base_dir, filepath))
 
+        # Recursively resolve the imported file
         tag_content = resolve_imports(filepath)
-        # Resolve PlatformWrapper and ProductWrapper tags using new functions
+        # Resolve PlatformWrapper and ProductWrapper tags
         tag_content = resolve_all_platform_tags(tag_content, platform)
         tag_content = resolve_all_product_tags(tag_content, product)
 
+        # Replace component tags with content
         rgx = r'<{}[\s\S]*?/>'.format(tag)
         mdxFileContents = re.sub(rgx, lambda match: tag_content, mdxFileContents)
 
@@ -1516,6 +1648,42 @@ def add_frontmatter(content, source_file, platform="flutter", exported_from=None
     
     return new_frontmatter + html_version_link + body
 
+def cleanup_html_tags(text):
+    """
+    Clean up HTML tags in markdown content:
+    - Replace <code></code> with backticks
+    - Remove <span> tags but keep enclosed text
+    """
+    
+    # Replace <code></code> with backticks
+    # Handle both single-line and multi-line code tags
+    code_pattern = r'<code[^>]*>(.*?)</code>'
+    text = re.sub(code_pattern, r'`\1`', text, flags=re.DOTALL)
+    
+    # Remove <span> tags but keep the text content
+    # This handles both self-closing and regular span tags
+    span_pattern = r'<span[^>]*>(.*?)</span>'
+    text = re.sub(span_pattern, r'\1', text, flags=re.DOTALL)
+    
+    # Also handle self-closing span tags (though they shouldn't contain text)
+    span_self_closing = r'<span[^>]*/>'
+    text = re.sub(span_self_closing, '', text)
+    
+    return text
+
+
+def apply_final_cleanup(text):
+    """
+    Apply final cleanup operations to the converted markdown.
+    """
+    # Clean up HTML tags
+    text = cleanup_html_tags(text)
+    
+    # Remove extra line breaks (existing logic)
+    text = re.sub(r'\n([\s\t]*\n){3,}', r'\n\n', text)
+    
+    return text
+
 # -----Main------
 
 try:
@@ -1616,6 +1784,9 @@ try:
     exported_from = f"https://docs.agora.io/en/{relative_path}"
     if platform:
         exported_from += f"?platform={platform}"
+
+    # Cleanup HTML tags before adding frontmatter
+    mdxContents = apply_final_cleanup(mdxContents)
 
     # Add frontmatter
     mdxContents = add_frontmatter(
