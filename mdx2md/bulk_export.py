@@ -193,7 +193,6 @@ def write_error_log(failed_exports, output_base):
     print(f"📋 Detailed error log written to: {log_file}")
 
 
-# --- Main ---
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -272,6 +271,10 @@ def main():
             fm = parse_frontmatter(mdx_file)
             excluded = fm.get("excluded_platforms", [])
             platform_selector = fm.get("platform_selector", True)
+            
+            # Auto-disable platform selector if no platforms are defined for this product
+            if not platforms and platform_selector:
+                platform_selector = False
 
             # Build output folder structure under output_base
             output_dir = os.path.join(output_base, os.path.dirname(rel_path))
