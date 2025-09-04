@@ -101,7 +101,7 @@ def create_platform_index_file(mdx_file, platforms, output_dir, base_name, docs_
         index_frontmatter = {
             'title': title,
             'platform_selector': False,
-            'exported_from': get_exported_from_url(mdx_file, docs_folder),
+            'exported_from': get_exported_from_url(mdx_file, docs_folder, is_help=False),
             'exported_on': datetime.utcnow().isoformat() + 'Z',
             'exported_file': f'{base_name}.md'
         }
@@ -155,18 +155,30 @@ Select your platform:
         return False
 
 
-def get_exported_from_url(mdx_file, docs_folder):
+def get_exported_from_url(mdx_file, docs_folder, is_help=False):
     """Generate the exported_from URL for the original MDX file"""
-    # Get relative path from docs folder
-    docs_path = os.path.join(docs_folder, "docs")
-    rel_path = os.path.relpath(mdx_file, docs_path)
-    normalized_path = rel_path.replace(os.sep, "/")
-    
-    # Remove .mdx extension if present
-    if normalized_path.endswith('.mdx'):
-        normalized_path = normalized_path[:-4]
-    
-    return f"https://docs.agora.io/en/{normalized_path}"
+    if is_help:
+        # For help files: docs-help folder maps to /help/ URL
+        docs_path = os.path.join(docs_folder, "docs-help")
+        rel_path = os.path.relpath(mdx_file, docs_path)
+        normalized_path = rel_path.replace(os.sep, "/")
+        
+        # Remove .mdx extension if present
+        if normalized_path.endswith('.mdx'):
+            normalized_path = normalized_path[:-4]
+        
+        return f"https://docs.agora.io/en/help/{normalized_path}"
+    else:
+        # Get relative path from docs folder
+        docs_path = os.path.join(docs_folder, "docs")
+        rel_path = os.path.relpath(mdx_file, docs_path)
+        normalized_path = rel_path.replace(os.sep, "/")
+        
+        # Remove .mdx extension if present
+        if normalized_path.endswith('.mdx'):
+            normalized_path = normalized_path[:-4]
+        
+        return f"https://docs.agora.io/en/{normalized_path}"
 
 
 def write_error_log(failed_exports, output_base):
@@ -220,26 +232,38 @@ def main():
         action="store_true",
         help="Continue processing even when individual exports fail (default behavior)"
     )
+    parser.add_argument(
+        "--process-help",
+        action="store_true",
+        help="Process docs-help folder instead of docs folder (no platform processing)"
+    )
     args = parser.parse_args()
 
     docs_folder = os.path.abspath(args.docs_folder)
     output_base = os.path.abspath(args.output_dir)
 
-    # products.js is always inside <Docs>/data/v2
-    products_file = os.path.join(docs_folder, "data", "v2", "products.js")
-
-    # start path is <Docs>/docs[/<subfolder>]
-    start_path = os.path.join(docs_folder, "docs", args.start_folder)
-
-    product_platforms = load_product_platforms(products_file)
+    if args.process_help:
+        # Help mode: process docs-help folder
+        start_path = os.path.join(docs_folder, "docs-help", args.start_folder)
+        product_platforms = {}  # Empty mapping for help files
+    else:
+        # Docs mode: process docs folder with platform support
+        start_path = os.path.join(docs_folder, "docs", args.start_folder)
+        # products.js is always inside <Docs>/data/v2
+        products_file = os.path.join(docs_folder, "data", "v2", "products.js")
+        product_platforms = load_product_platforms(products_file)
     
     # Track failures
     failed_exports = []
     
-    print(f"Loaded product → platforms mapping from {products_file}")
+
+    print(f"Mode: {'Help files' if args.process_help else 'Documentation'}")
+    if not args.process_help:
+        print(f"Loaded product → platforms mapping from {products_file}")
     print(f"Starting export from: {start_path}")
     print(f"Output directory: {output_base}")
-    print(f"Platform index creation: {'Disabled' if args.skip_platform_index else 'Enabled'}")
+    print(f"Platform processing: {'Disabled' if args.process_help else 'Enabled'}")
+    print(f"Platform index creation: {'Disabled' if args.skip_platform_index or args.process_help else 'Enabled'}")
     print(f"Continue on error: {'Enabled' if args.continue_on_error else 'Enabled (default)'}")
     print("-" * 60)
 
@@ -256,60 +280,75 @@ def main():
             if should_skip(mdx_file):
                 continue
 
-            # Derive productId from path (first folder after docs/)
-            rel_path = os.path.relpath(mdx_file, os.path.join(docs_folder, "docs"))
-            parts = rel_path.replace("\\", "/").split("/")
-            product_id = parts[0]
+            if args.process_help:
+                # Help files: simple processing, no platforms
+                rel_path = os.path.relpath(mdx_file, os.path.join(docs_folder, "docs-help"))
+                output_dir = os.path.join(output_base, "help", os.path.dirname(rel_path))
+                os.makedirs(output_dir, exist_ok=True)
 
-            if product_id not in product_platforms:
-                print(f"⚠️ Skipping {mdx_file}, no product mapping")
-                continue
-
-            platforms = product_platforms[product_id]
-
-            # Parse frontmatter
-            fm = parse_frontmatter(mdx_file)
-            excluded = fm.get("excluded_platforms", [])
-            platform_selector = fm.get("platform_selector", True)
-            
-            # Auto-disable platform selector if no platforms are defined for this product
-            if not platforms and platform_selector:
-                platform_selector = False
-
-            # Build output folder structure under output_base
-            output_dir = os.path.join(output_base, os.path.dirname(rel_path))
-            os.makedirs(output_dir, exist_ok=True)
-
-            base_name = os.path.splitext(os.path.basename(mdx_file))[0]
-
-            if not platform_selector:
-                # Single export only
+                base_name = os.path.splitext(os.path.basename(mdx_file))[0]
                 output_file = os.path.join(output_dir, f"{base_name}.md")
                 processed_files += 1
+                
                 if run_mdx2md(mdx_file, None, output_file, docs_folder, failed_exports):
                     successful_exports += 1
+                    
             else:
-                # Export once per platform (except excluded)
-                exported_platforms = []
-                successful_platforms = []
-                
-                for p in platforms:
-                    if p in excluded:
-                        print(f"  └─ Skipping {p} (excluded)")
-                        continue
-                    
-                    output_file = os.path.join(output_dir, f"{base_name}_{p}.md")
-                    processed_files += 1
-                    exported_platforms.append(p)
-                    
-                    if run_mdx2md(mdx_file, p, output_file, docs_folder, failed_exports):
-                        successful_exports += 1
-                        successful_platforms.append(p)
+                # Original docs processing logic (keep all your existing platform logic here)
+                # Derive productId from path (first folder after docs/)
+                rel_path = os.path.relpath(mdx_file, os.path.join(docs_folder, "docs"))
+                parts = rel_path.replace("\\", "/").split("/")
+                product_id = parts[0]
 
-                # Create platform index file only for successfully exported platforms
-                if not args.skip_platform_index and len(successful_platforms) > 1:
-                    if create_platform_index_file(mdx_file, successful_platforms, output_dir, base_name, docs_folder):
-                        index_files_created += 1
+                if product_id not in product_platforms:
+                    print(f"⚠️ Skipping {mdx_file}, no product mapping")
+                    continue
+
+                platforms = product_platforms[product_id]
+
+                # Parse frontmatter
+                fm = parse_frontmatter(mdx_file)
+                excluded = fm.get("excluded_platforms", [])
+                platform_selector = fm.get("platform_selector", True)
+                
+                # Auto-disable platform selector if no platforms are defined for this product
+                if not platforms and platform_selector:
+                    platform_selector = False
+
+                # Build output folder structure under output_base
+                output_dir = os.path.join(output_base, os.path.dirname(rel_path))
+                os.makedirs(output_dir, exist_ok=True)
+
+                base_name = os.path.splitext(os.path.basename(mdx_file))[0]
+
+                if not platform_selector:
+                    # Single export only
+                    output_file = os.path.join(output_dir, f"{base_name}.md")
+                    processed_files += 1
+                    if run_mdx2md(mdx_file, None, output_file, docs_folder, failed_exports):
+                        successful_exports += 1
+                else:
+                    # Export once per platform (except excluded)
+                    exported_platforms = []
+                    successful_platforms = []
+                    
+                    for p in platforms:
+                        if p in excluded:
+                            print(f"  └─ Skipping {p} (excluded)")
+                            continue
+                        
+                        output_file = os.path.join(output_dir, f"{base_name}_{p}.md")
+                        processed_files += 1
+                        exported_platforms.append(p)
+                        
+                        if run_mdx2md(mdx_file, p, output_file, docs_folder, failed_exports):
+                            successful_exports += 1
+                            successful_platforms.append(p)
+
+                    # Create platform index file only for successfully exported platforms
+                    if not args.skip_platform_index and len(successful_platforms) > 1:
+                        if create_platform_index_file(mdx_file, successful_platforms, output_dir, base_name, docs_folder):
+                            index_files_created += 1
 
     # Write detailed error log
     write_error_log(failed_exports, output_base)
@@ -319,7 +358,8 @@ def main():
     print(f"   📄 Total exports attempted: {processed_files}")
     print(f"   ✅ Successful exports: {successful_exports}")
     print(f"   ❌ Failed exports: {len(failed_exports)}")
-    print(f"   📑 Platform index files created: {index_files_created}")
+    if not args.process_help:
+        print(f"   📑 Platform index files created: {index_files_created}")
     
     if failed_exports:
         print("\n❌ Failed Exports:")

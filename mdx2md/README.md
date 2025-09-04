@@ -94,6 +94,8 @@ output/
     └── ...
 ```
 
+Documents from the `docs-help` directory are exported to the `help` folder.
+
 ## Platform Handling
 
 The tool processes files based on their frontmatter:
@@ -140,7 +142,7 @@ The tool relies on:
 - Original MDX files and their imports/assets
 - YAML frontmatter parsing for file metadata
 
-## How to export
+## Usage examples
 
 1. Execute the bulk export for the entire site:
 
@@ -148,13 +150,25 @@ The tool relies on:
     python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs
     ```
 
-2. Generate sitemap
+1. Export a specific folder:
+
+    ```bash
+    python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs --start-folder signaling/reference
+    ```
+
+1. Export the help articles:
+
+    ```bash
+    python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs --process-help 
+    ```
+
+1. Generate sitemap
 
     ```bash
     python sitemap_generator.py --docs-dir ./output
     ```
 
-3. Upload the following files to the `markdown-service` repository:
+1. Upload the following files to the `markdown-service` repository:
 
     1. Copy the images folder from the output to `/public/`
     1. Copy all other folders to `/public/en/`

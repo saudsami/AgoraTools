@@ -50,17 +50,22 @@ if product is None:
     dirname = dirname.replace('/', os.path.sep)
     # Split the directory path into parts
     parts = dirname.split(os.path.sep)
-    # Find the index of the "docs" folder
+    # Find the index of the "docs" or "docs-help" folder
     try:
-        docs_index = parts.index("docs")
-        # product name is the name of the docs sub-folder
-        if docs_index + 1 < len(parts):
-            product = parts[docs_index + 1]
+        if "docs-help" in parts:
+            docs_index = parts.index("docs-help")
+            # For help files, set a generic product name or skip product logic
+            product = "help"  # or you could set product = None and handle it later
         else:
-            print("Error: No product folder found after 'docs'")
-            sys.exit(-4)
+            docs_index = parts.index("docs")
+            # product name is the name of the docs sub-folder
+            if docs_index + 1 < len(parts):
+                product = parts[docs_index + 1]
+            else:
+                print("Error: No product folder found after 'docs'")
+                sys.exit(-4)
     except ValueError:
-        print("Error: 'docs' folder not found in path")
+        print("Error: Neither 'docs' nor 'docs-help' folder found in path")
         print(f"Available parts: {parts}")
         sys.exit(-5)
 
@@ -1631,13 +1636,20 @@ def add_frontmatter(content, source_file, platform="flutter", exported_from=None
     if output_file:
         fm_dict["exported_file"] = os.path.basename(output_file)
 
-    # Preserve key order
-    ordered_keys = ["title", "description", "sidebar_position"]
+    # Only keep specific original fields, plus export-added fields
+    allowed_original_keys = ["title", "description", "sidebar_position"]
     new_fm = {}
-    for key in ordered_keys:
+
+    # Add allowed original fields first (in order)
+    for key in allowed_original_keys:
         if key in fm_dict:
-            new_fm[key] = fm_dict.pop(key)
-    new_fm.update(fm_dict)
+            new_fm[key] = fm_dict[key]
+
+    # Add export-added fields (platform, exported_from, exported_on, exported_file)
+    export_keys = ["platform", "exported_from", "exported_on", "exported_file"]
+    for key in export_keys:
+        if key in fm_dict:
+            new_fm[key] = fm_dict[key]
 
     new_frontmatter = "---\n" + yaml.safe_dump(new_fm, sort_keys=False).strip() + "\n---\n\n"
     
@@ -1800,8 +1812,10 @@ try:
     # Write the modified contents to a new md file
     if args.output_file:
         # Use exactly what the user provided
-        output_path = args.output_file
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        output_path = os.path.abspath(args.output_file)
+        output_dir = os.path.dirname(output_path)
+        if output_dir:  # Only create directory if there is one
+            os.makedirs(output_dir, exist_ok=True)
     else:
         if not os.path.exists('./output'):
             os.makedirs('./output')
