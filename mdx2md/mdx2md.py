@@ -995,7 +995,7 @@ def has_variable_imports(content):
     return bool(re.search(pattern, content))
 
 
-def resolve_variable_expressions(content, variables, platform):
+def resolve_variable_expressions(content, variables, platform, ag_platform=None):
     """
     Resolve variable expressions like {variable.property[props.ag_platform]} in content.
     """
@@ -1010,8 +1010,15 @@ def resolve_variable_expressions(content, variables, platform):
         prop_name = match.group(2)
         explicit_platform = match.group(3)
         
-        # Use explicit platform if provided, otherwise use the current platform
-        target_platform = explicit_platform or platform
+        # Use explicit platform if provided, 
+        # otherwise use ag_platform for props.ag_platform, 
+        # otherwise fall back to general platform
+        if explicit_platform:
+            target_platform = explicit_platform
+        elif ag_platform and 'props.ag_platform' in match.group(0):
+            target_platform = ag_platform
+        else:
+            target_platform = platform
         
         if var_name in variables and prop_name in variables[var_name]:
             prop_obj = variables[var_name][prop_name]
@@ -1025,9 +1032,10 @@ def resolve_variable_expressions(content, variables, platform):
 
 
 # Enhanced resolve_imports function
-def resolve_imports(mdxFilePath):
+def resolve_imports(mdxFilePath, ag_platform_override=None):
     """
     Enhanced import resolution that handles both component imports and variable imports.
+    Also handles ag_platform attribute for component-specific platform resolution.
     """
     base_dir = os.path.dirname(mdxFilePath)
     with open(rf'{mdxFilePath}', 'r', encoding='utf-8') as file:
@@ -1080,7 +1088,7 @@ def resolve_imports(mdxFilePath):
         for alias, vars_dict in all_variables.items():
             flattened_vars[alias] = vars_dict
         
-        mdxFileContents = resolve_variable_expressions(mdxFileContents, flattened_vars, platform)
+        mdxFileContents = resolve_variable_expressions(mdxFileContents, flattened_vars, platform, ag_platform_override)
     
     # Process component imports (existing logic)
     for tag, filepath in component_matches:
@@ -1090,15 +1098,25 @@ def resolve_imports(mdxFilePath):
         if not os.path.isabs(filepath):
             filepath = os.path.abspath(os.path.join(base_dir, filepath))
 
-        # Recursively resolve the imported file
-        tag_content = resolve_imports(filepath)
-        # Resolve PlatformWrapper and ProductWrapper tags
-        tag_content = resolve_all_platform_tags(tag_content, platform)
-        tag_content = resolve_all_product_tags(tag_content, product)
-
-        # Replace component tags with content
-        rgx = r'<{}[\s\S]*?/>'.format(tag)
-        mdxFileContents = re.sub(rgx, lambda match: tag_content, mdxFileContents)
+        # Replace component tags with content, checking for ag_platform attribute
+        rgx = r'<{}([\s\S]*?)/>'.format(tag)
+        
+        def replace_component(match):
+            tag_attributes = match.group(1)
+            
+            # Check for ag_platform attribute in the component tag
+            ag_platform_match = re.search(r'ag_platform\s*=\s*[\'"]([^\'"]+)[\'"]', tag_attributes)
+            component_ag_platform = ag_platform_match.group(1) if ag_platform_match else ag_platform_override
+            
+            # Recursively resolve the imported file with ag_platform context
+            processed_content = resolve_imports(filepath, component_ag_platform)
+            # Use general platform for PlatformWrapper and ProductWrapper tags
+            processed_content = resolve_all_platform_tags(processed_content, platform)
+            processed_content = resolve_all_product_tags(processed_content, product)
+            
+            return processed_content
+        
+        mdxFileContents = re.sub(rgx, replace_component, mdxFileContents)
 
     return mdxFileContents
 

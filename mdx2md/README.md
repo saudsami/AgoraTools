@@ -173,3 +173,47 @@ The tool relies on:
     1. Copy the images folder from the output to `/public/`
     1. Copy all other folders to `/public/en/`
     1. Copy sitemap.xml to `/public/`
+
+
+## Markdown File Renamer with Sequential ID Mapping
+
+This tool scans a directory of Markdown (`.md`) files, renames each file with a sequential numeric ID, and generates a JSON index that maps each ID to metadata extracted from the file’s frontmatter (such as title and exported URL).
+
+- Recursively scans all Markdown files in a given folder.  
+- Renames files to the format:  
+
+  ```
+  <id>__<original_filename>.md
+  ```
+
+- Extracts `title` and `exported_from` (or other URL fields) from frontmatter.  
+- Maintains a `file_mapping.json` index with:  
+  - Unique numeric ID  
+  - Original filename and path  
+  - Current filename  
+  - Title  
+  - Source URL  
+
+### Usage
+
+```bash
+python rename_md_files.py <root_folder> [--index-file file_mapping.json]
+```
+
+- `root_folder`: Path to the root folder containing Markdown files.  
+- `--index-file`: Optional. Name of the JSON index file (default: `file_mapping.json`).  
+
+### Example
+
+```bash
+python rename_md_files.py ./docs
+```
+
+- Renames files in `./docs/` to include IDs.  
+- Creates or updates `./docs/file_mapping.json`.  
+
+### Notes
+- If `file_mapping.json` already exists, the script will load it, preserve existing IDs, and continue numbering from the highest ID.  
+- Files already renamed with IDs (e.g., `12__guide.md`) are skipped.  
+- Requires Python 3.6+.  
+
