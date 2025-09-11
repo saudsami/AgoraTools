@@ -98,6 +98,20 @@ def resolve_value(value, variables):
         match = re.search(r'\$\{(\w+)\}', value)
     return value
 
+def load_product_platforms(products_file):
+    """Parse products.js and return { productId: [platforms...] }"""
+    with open(products_file, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    pattern = re.compile(r"id:\s*'([^']+)'.*?platforms:\s*{[^}]*latest:\s*\[([^\]]*)\]", re.DOTALL)
+    mapping = {}
+    for match in pattern.finditer(content):
+        product_id = match.group(1)
+        platforms_str = match.group(2)
+        platforms = re.findall(r"'([^']+)'", platforms_str)
+        mapping[product_id] = platforms
+    return mapping
+
 # Improved createDictionary function that handles JavaScript comments
 def createDictionary(path):
     with open(path, 'r', encoding='utf-8') as f:
@@ -1429,6 +1443,7 @@ def resolve_codeblocks(text):
         code_content = code_content.replace('\\"', '"')
         code_content = code_content.replace("\\'", "'")
         code_content = code_content.replace('\\`', '`')
+        code_content = code_content.replace('\{', '{')
 
         # Apply base indentation to each line while preserving internal indentation
         lines = code_content.split('\n')
@@ -1745,6 +1760,23 @@ try:
     else:
         platformDict = createDictionary(platform_path)
 
+    platform_selector = True
+    has_platforms = False
+    # Extract platform_selector before any processing modifies frontmatter
+    original_fm_match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", contents, re.DOTALL)
+    platform_selector = True  # Default
+    if original_fm_match:
+        original_fm_dict = yaml.safe_load(original_fm_match.group(1)) or {}
+        platform_selector = original_fm_dict.get("platform_selector", True)
+
+    # Check if product has platforms defined
+    is_help_file = "docs-help" in mdxPath
+    if product and not is_help_file:
+        products_file = os.path.join(args.docs_folder, "data", "v2", "products.js")
+        if os.path.exists(products_file):
+            product_platforms = load_product_platforms(products_file)
+            has_platforms = bool(product_platforms.get(product, []))
+
     # Resolve import statements 
     # Also resolves PlatformWrapper and ProductWrapper tags
     mdxContents = resolve_imports(mdxPath)
@@ -1812,7 +1844,7 @@ try:
         relative_path = relative_path[:-4]
 
     exported_from = f"https://docs.agora.io/en/{relative_path}"
-    if platform:
+    if platform and platform_selector and has_platforms:
         exported_from += f"?platform={platform}"
 
     # Cleanup HTML tags before adding frontmatter
