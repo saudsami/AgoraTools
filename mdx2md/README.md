@@ -172,7 +172,7 @@ The tool relies on:
 
     1. Copy the images folder from the output to `/public/`
     1. Copy all other folders to `/public/en/`
-    1. Copy sitemap.xml to `/public/`
+    1. Copy `sitemap.xml` to `/public/`
 
 
 ## Markdown File Renamer with Sequential ID Mapping

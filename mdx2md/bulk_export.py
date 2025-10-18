@@ -273,7 +273,7 @@ def main():
 
     for root, _, files in os.walk(start_path):
         for filename in files:
-            if not filename.endswith(".mdx"):
+            if not (filename.endswith(".mdx") or filename.endswith(".md")):
                 continue
 
             mdx_file = os.path.join(root, filename)

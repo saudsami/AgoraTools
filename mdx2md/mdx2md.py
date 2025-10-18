@@ -1689,7 +1689,9 @@ def add_frontmatter(content, source_file, platform="flutter", exported_from=None
     # Add HTML version link if exported_from is available
     html_version_link = ""
     if exported_from:
-        html_version_link = f"[HTML Version]({exported_from})\n\n"
+        # Strip .md or .mdx extension from the URL for HTML version
+        clean_url = re.sub(r'\.(mdx?|md)$', '', exported_from)
+        html_version_link = f"[HTML Version]({clean_url})\n\n"
     
     return new_frontmatter + html_version_link + body
 
