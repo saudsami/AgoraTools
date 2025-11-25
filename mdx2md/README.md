@@ -174,6 +174,11 @@ The tool relies on:
     1. Copy all other folders to `/public/en/`
     1. Copy `sitemap.xml` to `/public/`
 
+1. Export an under development doc folder for AI feedback
+
+  ```bash
+  python bulk_export.py --docs-folder D:/Git/AgoraDocsPrivate/Docs --start-folder video-calling/enhance-call-quality/ --output-dir temp
+  ```
 
 ## Markdown File Renamer with Sequential ID Mapping
 
@@ -216,4 +221,3 @@ python rename_md_files.py ./docs
 - If `file_mapping.json` already exists, the script will load it, preserve existing IDs, and continue numbering from the highest ID.  
 - Files already renamed with IDs (e.g., `12__guide.md`) are skipped.  
 - Requires Python 3.6+.  
-

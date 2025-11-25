@@ -1835,19 +1835,33 @@ try:
     # Add frontmatter
     normalized_path = mdxPath.replace(os.sep, "/")
 
-    # Strip everything before "docs/"
-    if "/docs/" in normalized_path:
-        relative_path = normalized_path.split("/docs/", 1)[1]
+    # Check if this is a help file
+    is_help_file = "/docs-help/" in normalized_path
+
+    if is_help_file:
+        # For help files, strip everything before "docs-help/"
+        relative_path = normalized_path.split("/docs-help/", 1)[1]
+        # Remove .mdx or .md extension if present
+        if relative_path.endswith('.mdx'):
+            relative_path = relative_path[:-4]
+        elif relative_path.endswith('.md'):
+            relative_path = relative_path[:-3]
+        
+        exported_from = f"https://docs.agora.io/en/help/{relative_path}"
     else:
-        relative_path = os.path.basename(normalized_path)
+        # Original docs processing
+        if "/docs/" in normalized_path:
+            relative_path = normalized_path.split("/docs/", 1)[1]
+        else:
+            relative_path = os.path.basename(normalized_path)
 
-    # Remove .mdx extension if present
-    if relative_path.endswith('.mdx'):
-        relative_path = relative_path[:-4]
-
-    exported_from = f"https://docs.agora.io/en/{relative_path}"
-    if platform and platform_selector and has_platforms:
-        exported_from += f"?platform={platform}"
+        # Remove .mdx extension if present
+        if relative_path.endswith('.mdx'):
+            relative_path = relative_path[:-4]
+        
+        exported_from = f"https://docs.agora.io/en/{relative_path}"
+        if platform and platform_selector and has_platforms:
+            exported_from += f"?platform={platform}"
 
     # Cleanup HTML tags before adding frontmatter
     mdxContents = apply_final_cleanup(mdxContents)
