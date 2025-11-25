@@ -1,89 +1,223 @@
-# `mdx` to Markdown
+# Agora Documentation Export Tool
 
-`mdx2md.py` is a Python script that you can use to convert any `.mdx` document in the Agora docs repository to a single markdown `.md` file by resolving all its dependencies. This enables you to include the relevant Agora document as a `README.md` file in the Github code repository. 
+A Python script that automates the conversion of multiple MDX documentation files to Markdown format using the `mdx2md.py` converter. This tool processes entire documentation repositories, handling platform-specific exports and creating organized output structures.
 
-When you run the script, it does the following:
+## Overview
 
-* Loads global variables into a dictionary.
-* Creates product and platform dictionaries to resolve `<Vpl>` and `<Vpd>` tags.
-* Reads the `.mdx` file and recursively resolves all the import statements.
-* Resolves `<PlatformWrapper>` tags to filter content for the selected platform.
-* Resolves `<ProductWrapper>` tags to filter content for the selected product.
-* Replaces global variables `<Vg k="KEY" />` with values.
-* Replaces product `<Vpd k="KEY" />` and platform `<Vpl k="KEY" />` variables, with corresponding values.
-* Processes the document header to add a document title.
-* Copies images from the repository to the `./images` folder and updates image links.
-* Converts `<Link></Link>` tags to markdown links.
-* Updates the relative path in markdown links to Agora docs urls
-* Removes extra line breaks.
-* Writes the modified contents to a new `.md` file.
+The bulk export tool walks through a documentation repository, identifies MDX files, and converts them to Markdown based on platform configurations defined in the product mapping. It handles:
+
+- Platform-specific document variations
+- Automated file organization
+- Error handling and reporting  
+- Platform index file generation
+- Bulk processing with detailed logging
 
 ## Prerequisites
-To run the `mdx2md` Python script you must have: 
 
-* Installed [Python](https://www.python.org/downloads/)
-* Cloned the [Agora Docs Github repository](https://github.com/AgoraIO/Docs) and its submodules
+- Python 3.7+
+- `mdx2md.py` script in the same directory
+- Required Python packages: `pyyaml`
+- Access to the Agora Docs repository structure
 
-
-## Setup
-
-Execute the following command to clone the AgoraTools repository:
+## Usage
 
 ```bash
-git clone https://github.com/saudsami/AgoraTools
+python bulk_export.py --docs-folder <path> [options]
 ```
 
-## Run the script
+### Required Parameters
 
-Take the following steps:
+- `--docs-folder` (required): Path to the root Docs folder containing the documentation repository (e.g., `D:/Git/AgoraDocs/Docs`)
 
-1. Open a terminal window and navigate to the `/AgoraTools/mdx2md` folder.
+### Optional Parameters
 
-1. In the terminal window execute the following command:
-    
+- `--start-folder` (optional): Subfolder within `Docs/docs` to start processing from. If not specified, processes the entire docs folder.
+  - Example: `--start-folder flexible-classroom` processes only `Docs/docs/flexible-classroom/`
+
+- `--output-dir` (optional): Base output directory for generated Markdown files. Default: `output`
+  - Creates the directory structure if it doesn't exist
+  - Maintains the original folder hierarchy from the source
+
+- `--skip-platform-index` (optional): Skip creation of platform index files. When omitted, the tool creates index files that link to all platform-specific versions of documents.
+
+- `--continue-on-error` (optional): Explicitly continue processing when individual exports fail. This is the default behavior, included for clarity.
+
+## Examples
+
+### Basic Usage
+Convert all documentation:
+```bash
+python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs
+```
+
+### Process Specific Product
+Convert only flexible-classroom documentation:
+```bash
+python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs --start-folder flexible-classroom
+```
+
+### Custom Output Directory
+Export to a custom location:
+```bash
+python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs --output-dir converted-docs
+```
+
+### Skip Platform Indexes
+Generate only platform-specific files without index pages:
+```bash
+python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs --skip-platform-index
+```
+
+## How It Works
+
+1. **Product Mapping**: Reads `Docs/data/v2/products.js` to understand which platforms are available for each product
+2. **File Discovery**: Walks through the documentation directory to find `.mdx` files
+3. **Platform Processing**: For each file, determines available platforms and creates exports accordingly
+4. **Conversion**: Calls `mdx2md.py` for each platform-specific version
+5. **Index Generation**: Creates platform selection pages linking to all variants (unless skipped)
+6. **Error Handling**: Continues processing even when individual files fail, collecting error details
+
+## Output Structure
+
+The tool maintains the original folder hierarchy:
+
+```
+output/
+├── flexible-classroom/
+│   ├── get-started/
+│   │   ├── quickstart_android.md
+│   │   ├── quickstart_ios.md
+│   │   ├── quickstart_web.md
+│   │   └── quickstart.md (platform index)
+│   └── ...
+└── video-calling/
+    └── ...
+```
+
+Documents from the `docs-help` directory are exported to the `help` folder.
+
+## Platform Handling
+
+The tool processes files based on their frontmatter:
+
+- **`platform_selector: true`** (default): Creates separate files for each supported platform
+- **`platform_selector: false`**: Creates a single universal file
+- **`excluded_platforms`**: Array of platforms to skip for this file
+
+## Error Handling
+
+When exports fail:
+- Processing continues with remaining files
+- Error details are collected and reported
+- A detailed error log (`export_errors.log`) is created in the output directory
+- Final summary shows success/failure statistics
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Missing product mapping**: Files skipped with "no product mapping" warning
+   - Ensure the file path structure matches product IDs in `products.js`
+
+2. **Export failures**: Individual files fail conversion
+   - Check the error log for detailed failure reasons
+   - Common causes: missing imports, invalid MDX syntax, missing assets
+
+3. **Path issues**: Windows/Unix path separator problems
+   - The tool normalizes paths automatically, but ensure no mixed separators in arguments
+
+### Error Log
+
+Check `export_errors.log` in the output directory for:
+- Complete command that failed
+- Return codes and error messages  
+- File paths and platform information
+- Suggested fixes for common issues
+
+## Dependencies
+
+The tool relies on:
+- `mdx2md.py` for individual file conversion
+- `products.js` for platform configuration
+- Original MDX files and their imports/assets
+- YAML frontmatter parsing for file metadata
+
+## Usage examples
+
+1. Execute the bulk export for the entire site:
+
     ```bash
-    python mdx2md.py [--mdxPath MDXPATH] [--platform PLATFORM] [--product PRODUCT]
+    python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs
     ```
 
-    * `mdxPath`: The absolute path to the `.mdx` file in the `docs` repository.
-    * `platform`: The platform for which you want to generate the markdown document. Default is `android`.
-    * `product`: (Optional) The product for which you want to generate the document. If omitted, the product name is automatically interpreted from the `mdxPath`.
-
-    For example:
+1. Export a specific folder:
 
     ```bash
-    python mdx2md.py --mdxPath C:\Git\AgoraDocsPrivate\Docs\docs\voice-calling\get-started\get-started-sdk.mdx --platform flutter
+    python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs --start-folder signaling/reference
     ```
 
-    The script creates an `output` folder in your working directory.
+1. Export the help articles:
 
-1. Open the `output` folder. 
-
-    The exported markdown file has the same name as the input `.mdx` file. The `images` folder contains all the images from the repository that are used in the document.
-
-## Reference
-
-This section provides additional content that completes the information in this document.
-
-### Export to PDF
-
-You can convert the `.md` file generated using `mdx2md.py` script to a `.pdf` document using any markdown to PDF converter. If you use VS Code:
-
-1. Install the [Markdown PDF](https://marketplace.visualstudio.com/items?itemName=yzane.markdown-pdf) extension.
-
-2. Open the `.md` file in VS code.
-
-2. Press `CTRL + SHIFT + p`, type "Export (pdf)" and press enter. A `.pdf` file is created in the same folder as the markdown file.
-
-### Known Issues
-The script has the following limitations:
-
-* The script does not correctly process nested `<PlatformWrapper>` and `<ProductWrapper>` tags. `<PlatformWrapper>` tags inside `<ProductWrapper>` or visa versa are processed correctly but same type of nested tags produce unexpected results. To avoid nesting tags in the documentation, use a JSON array with multiple values. For example:
-
-    ```xml
-    <PlatformWrapper notAllowed="{['android', 'flutter']}">
-    // some non-android, non-flutter stuff
-    </PlatformWrapper>
+    ```bash
+    python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs --process-help 
     ```
 
-* If the content inside `<PlatformWrapper>` and `<ProductWrapper>` tags is unnecessarily indented, the indenting is reproduced in the markdown file which prevents code blocks from being interpreted and properly highlighted.
+1. Generate sitemap
+
+    ```bash
+    python sitemap_generator.py --docs-dir ./output
+    ```
+
+1. Upload the following files to the `markdown-service` repository:
+
+    1. Copy the images folder from the output to `/public/`
+    1. Copy all other folders to `/public/en/`
+    1. Copy `sitemap.xml` to `/public/`
+
+1. Export an under development doc folder for AI feedback
+
+  ```bash
+  python bulk_export.py --docs-folder D:/Git/AgoraDocsPrivate/Docs --start-folder video-calling/enhance-call-quality/ --output-dir temp
+  ```
+
+## Markdown File Renamer with Sequential ID Mapping
+
+This tool scans a directory of Markdown (`.md`) files, renames each file with a sequential numeric ID, and generates a JSON index that maps each ID to metadata extracted from the file’s frontmatter (such as title and exported URL).
+
+- Recursively scans all Markdown files in a given folder.  
+- Renames files to the format:  
+
+  ```
+  <id>__<original_filename>.md
+  ```
+
+- Extracts `title` and `exported_from` (or other URL fields) from frontmatter.  
+- Maintains a `file_mapping.json` index with:  
+  - Unique numeric ID  
+  - Original filename and path  
+  - Current filename  
+  - Title  
+  - Source URL  
+
+### Usage
+
+```bash
+python rename_md_files.py <root_folder> [--index-file file_mapping.json]
+```
+
+- `root_folder`: Path to the root folder containing Markdown files.  
+- `--index-file`: Optional. Name of the JSON index file (default: `file_mapping.json`).  
+
+### Example
+
+```bash
+python rename_md_files.py ./docs
+```
+
+- Renames files in `./docs/` to include IDs.  
+- Creates or updates `./docs/file_mapping.json`.  
+
+### Notes
+- If `file_mapping.json` already exists, the script will load it, preserve existing IDs, and continue numbering from the highest ID.  
+- Files already renamed with IDs (e.g., `12__guide.md`) are skipped.  
+- Requires Python 3.6+.  
