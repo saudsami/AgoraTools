@@ -177,6 +177,201 @@ def resolve_local_variables(text, product, productDictionary, platform, platform
     text = re.sub(r'<Vpl\s+k="(\w+)"\s*/>', lambda match: platformDictionary[platform].get(match.group(1), match.group(0)), text)
     return text
 
+# ===== EXTRACTED HELPER FUNCTIONS FOR PARAMETER LIST PROCESSING =====
+# These functions are used by both standalone ParameterList and RestAPILayout
+
+def normalize_tags_for_parsing(content):
+    """Convert tag names to lowercase for BeautifulSoup parsing"""
+    tag_mappings = {
+        'LeftColumn': 'leftcolumn',
+        'RightColumn': 'rightcolumn',
+        'ParameterList': 'parameterlist',
+        'Parameter': 'parameter', 
+        'PathParameter': 'pathparameter',
+        'Section': 'section',
+        'Tabs': 'tabs',
+        'TabItem': 'tabitem'
+    }
+    
+    for original, normalized in tag_mappings.items():
+        content = re.sub(f'<{original}(\\s[^>]*?)?>', f'<{normalized}\\1>', content)
+        content = re.sub(f'</{original}>', f'</{normalized}>', content)
+    
+    return content
+
+
+def process_list_element(list_element):
+    """Convert HTML lists to markdown format with proper spacing"""
+    items = []
+    for li in list_element.find_all('li', recursive=False):  # Only direct children
+        item_text = li.get_text(strip=True)
+        items.append(f"    - {item_text}")  # 4 spaces for proper indentation
+    
+    if items:
+        return '\n' + '\n'.join(items)  # Start with newline, separate each item
+    return ''
+
+
+def process_mixed_content_with_lists(element):
+    """Process elements that contain both text and lists"""
+    result_parts = []
+    
+    for child in element.children:
+        if isinstance(child, NavigableString):
+            text = str(child).strip()
+            if text:
+                result_parts.append(text)
+        elif isinstance(child, type(element)):  # Tag type
+            if child.name in ['ul', 'ol']:
+                list_content = process_list_element(child)
+                result_parts.append(list_content)
+            else:
+                child_text = child.get_text(strip=True)
+                if child_text:
+                    result_parts.append(child_text)
+    
+    return ' '.join(result_parts)
+
+
+def get_element_text_content(element):
+    """Get all text content from element, including nested tags"""
+    if isinstance(element, NavigableString):
+        return str(element).strip()
+    elif hasattr(element, 'name'):  # Tag object
+        if element.name in ['ul', 'ol']:
+            return process_list_element(element)
+        elif element.name == 'li':
+            # Handle individual list items
+            return f"- {element.get_text(strip=True)}"
+        else:
+            # For other elements, check if they contain lists
+            if element.find(['ul', 'ol']):
+                return process_mixed_content_with_lists(element)
+            else:
+                return element.get_text(strip=True)
+    else:
+        return ''
+
+
+def get_direct_text_content(param_element):
+    """Get text content directly under element, excluding nested parameter tags"""
+    text_parts = []
+    
+    for child in param_element.children:
+        if isinstance(child, NavigableString):
+            text_content = str(child).strip()
+            if text_content:
+                text_parts.append(text_content)
+        elif hasattr(child, 'name') and child.name != 'parameter':  # Tag object, not a parameter
+            if child.name in ['ul', 'ol']:
+                # Process list specially for parameter descriptions
+                list_content = process_list_element(child)
+                if list_content:
+                    text_parts.append(list_content)
+            else:
+                # Handle other tags normally
+                child_text = get_element_text_content(child)
+                if child_text:
+                    text_parts.append(child_text)
+    
+    return ''.join(text_parts).strip()
+
+
+def process_parameter_recursively(param_element, indent_level):
+    """Recursively process Parameter elements maintaining hierarchy"""
+    result_lines = []
+    indent = '  ' * indent_level
+    
+    # Extract parameter attributes
+    name = param_element.get('name', 'unknown')
+    param_type = param_element.get('type', 'string')
+    possible_values = param_element.get('possiblevalues', param_element.get('possibleValues'))
+    
+    # Get description (text content that's not in nested parameter tags)
+    description = get_direct_text_content(param_element)
+    
+    # Build parameter type info with possible values if present
+    type_info = f"({param_type}"
+    if possible_values:
+        # Split values and wrap each in backticks
+        values_list = [f"`{val.strip()}`" for val in possible_values.split(',')]
+        values_str = ', '.join(values_list)
+        type_info += f", possible values: {values_str}"
+    type_info += ")"
+    
+    # Build parameter line
+    param_line = f"{indent}- **{name}** {type_info}: {description}"
+    result_lines.append(param_line)
+    
+    # Process nested parameters
+    nested_params = param_element.find_all('parameter', recursive=False)
+    for nested_param in nested_params:
+        nested_lines = process_parameter_recursively(nested_param, indent_level + 1)
+        result_lines.extend(nested_lines)
+    
+    return result_lines
+
+# ===== END OF EXTRACTED HELPER FUNCTIONS =====
+
+
+def resolve_parameter_list(text):
+    """
+    Convert standalone ParameterList components to structured markdown.
+    Handles ParameterList both inside and outside RestAPILayout.
+    Uses BeautifulSoup for reliable parsing of nested structures.
+    """
+    try:
+        from bs4 import BeautifulSoup, NavigableString, Tag
+    except ImportError:
+        print("Warning: BeautifulSoup not available for ParameterList processing")
+        return text
+    
+    # Pattern to match ParameterList components
+    parameterlist_pattern = re.compile(
+        r'<ParameterList\s*([^>]*?)>(.*?)</ParameterList>',
+        re.MULTILINE | re.DOTALL
+    )
+    
+    def process_parameterlist(match):
+        attributes_str = match.group(1)
+        content = match.group(2).strip()
+        
+        # Normalize tags for parsing
+        normalized_content = normalize_tags_for_parsing(content)
+        wrapped_content = f"<root>{normalized_content}</root>"
+        
+        try:
+            soup = BeautifulSoup(wrapped_content, 'html.parser')
+            result_parts = []
+            
+            # Add title if present in attributes
+            title_match = re.search(r'title\s*=\s*["\']([^"\']+)["\']', attributes_str)
+            if title_match:
+                result_parts.append(f"**{title_match.group(1)}**")
+                result_parts.append('')
+            
+            # Process all parameter elements recursively
+            root = soup.find('root')
+            if root:
+                for element in root.children:
+                    if isinstance(element, Tag) and element.name == 'parameter':
+                        param_lines = process_parameter_recursively(element, 0)
+                        result_parts.extend(param_lines)
+                    elif isinstance(element, NavigableString):
+                        text_content = str(element).strip()
+                        if text_content:
+                            result_parts.append(text_content)
+            
+            return '\n'.join(result_parts) if result_parts else match.group(0)
+            
+        except Exception as e:
+            print(f"Error processing ParameterList: {e}")
+            return match.group(0)
+    
+    # Replace all ParameterList components
+    return parameterlist_pattern.sub(process_parameterlist, text)
+
+
 def resolve_rest_api_layout(text):
     """
     Convert RestAPILayout components to structured markdown using BeautifulSoup parser.
@@ -239,27 +434,6 @@ def resolve_rest_api_layout(text):
             # Fallback to regex approach if parsing fails
             return resolve_rest_api_layout_regex_fallback(layout_content)
     
-    def normalize_tags_for_parsing(content):
-        """Convert tag names to lowercase for BeautifulSoup parsing"""
-        # Map of original tags to normalized versions
-        tag_mappings = {
-            'LeftColumn': 'leftcolumn',
-            'RightColumn': 'rightcolumn',
-            'ParameterList': 'parameterlist',
-            'Parameter': 'parameter', 
-            'PathParameter': 'pathparameter',
-            'Section': 'section',
-            'Tabs': 'tabs',
-            'TabItem': 'tabitem'
-        }
-        
-        # Replace opening and closing tags
-        for original, normalized in tag_mappings.items():
-            content = re.sub(f'<{original}(\\s[^>]*?)?>', f'<{normalized}\\1>', content)
-            content = re.sub(f'</{original}>', f'</{normalized}>', content)
-        
-        return content
-    
     def process_left_column_parsed(left_column):
         """Process LeftColumn content using parsed tree structure"""
         result_parts = []
@@ -274,6 +448,7 @@ def resolve_rest_api_layout(text):
                     param_line = process_path_parameter_parsed(element)
                     result_parts.append(param_line)
                 elif element.name == 'parameterlist':
+                    # Use extracted helper function
                     param_section = process_parameter_list_parsed(element)
                     result_parts.append(param_section)
                 else:
@@ -308,41 +483,12 @@ def resolve_rest_api_layout(text):
         type_info += ")"
         
         # Get parameter description and handle lists specially
-        description = get_parameter_description_with_lists(param_element)
+        description = get_direct_text_content(param_element)
         
         return f"- **{name}** {type_info}: {description}"
     
-    def get_parameter_description_with_lists(param_element):
-        """Get parameter description, properly formatting any lists"""
-        content_parts = []
-        
-        for child in param_element.children:
-            if isinstance(child, NavigableString):
-                text = str(child).strip()
-                if text:
-                    content_parts.append(text)
-            elif isinstance(child, Tag):
-                if child.name in ['ul', 'ol']:
-                    # Process list specially for parameter descriptions
-                    list_items = []
-                    for li in child.find_all('li', recursive=False):
-                        item_text = li.get_text(strip=True)
-                        list_items.append(f"    - {item_text}")
-                    
-                    if list_items:
-                        # Add a newline before the list and join items
-                        list_content = '\n' + '\n'.join(list_items)
-                        content_parts.append(list_content)
-                else:
-                    # Handle other tags normally
-                    child_text = child.get_text(strip=True)
-                    if child_text:
-                        content_parts.append(child_text)
-        
-        return ''.join(content_parts)
-    
     def process_parameter_list_parsed(param_list):
-        """Process a ParameterList element with proper nesting"""
+        """Process a ParameterList element using extracted helpers"""
         result_parts = []
         
         # Add title if present
@@ -362,117 +508,6 @@ def resolve_rest_api_layout(text):
                     result_parts.append(text_content)
         
         return '\n'.join(result_parts)
-    
-    def process_parameter_recursively(param_element, indent_level):
-        """Recursively process Parameter elements maintaining hierarchy"""
-        result_lines = []
-        indent = '  ' * indent_level
-        
-        # Extract parameter attributes
-        name = param_element.get('name', 'unknown')
-        param_type = param_element.get('type', 'string')
-        possible_values = param_element.get('possiblevalues', param_element.get('possibleValues'))
-        
-        # Get description (text content that's not in nested parameter tags)
-        description = get_direct_text_content(param_element)
-        
-        # Build parameter type info with possible values if present
-        type_info = f"({param_type}"
-        if possible_values:
-            # Split values and wrap each in backticks
-            values_list = [f"`{val.strip()}`" for val in possible_values.split(',')]
-            values_str = ', '.join(values_list)
-            type_info += f", possible values: {values_str}"
-        type_info += ")"
-        
-        # Build parameter line
-        param_line = f"{indent}- **{name}** {type_info}: {description}"
-        result_lines.append(param_line)
-        
-        # Note: We no longer add possible values as a separate blockquote
-        # since they're now in the parameter header
-        
-        # Process nested parameters
-        nested_params = param_element.find_all('parameter', recursive=False)
-        for nested_param in nested_params:
-            nested_lines = process_parameter_recursively(nested_param, indent_level + 1)
-            result_lines.extend(nested_lines)
-        
-        return result_lines
-    
-    def get_direct_text_content(element):
-        """Get text content directly under element, excluding nested parameter tags"""
-        text_parts = []
-        
-        for child in element.children:
-            if isinstance(child, NavigableString):
-                text_content = str(child).strip()
-                if text_content:
-                    text_parts.append(text_content)
-            elif isinstance(child, Tag) and child.name != 'parameter':
-                # Include content from non-parameter tags
-                if child.name in ['ul', 'ol']:
-                    # Special handling for lists
-                    list_content = process_list_element(child)
-                    if list_content:
-                        text_parts.append(list_content)
-                else:
-                    child_content = get_element_text_content(child)
-                    if child_content:
-                        text_parts.append(child_content)
-        
-        return ' '.join(text_parts).strip()
-    
-    def get_element_text_content(element):
-        """Get all text content from element, including nested tags"""
-        if isinstance(element, NavigableString):
-            return str(element).strip()
-        elif isinstance(element, Tag):
-            # Handle specific tags differently
-            if element.name in ['ul', 'ol']:
-                return process_list_element(element)
-            elif element.name == 'li':
-                # Handle individual list items
-                return f"- {element.get_text(strip=True)}"
-            else:
-                # For other elements, check if they contain lists
-                if element.find(['ul', 'ol']):
-                    return process_mixed_content_with_lists(element)
-                else:
-                    return element.get_text(strip=True)
-        else:
-            return ''
-    
-    def process_list_element(list_element):
-        """Convert HTML lists to markdown format with proper spacing"""
-        items = []
-        for li in list_element.find_all('li', recursive=False):  # Only direct children
-            item_text = li.get_text(strip=True)
-            items.append(f"    - {item_text}")  # 4 spaces for proper indentation
-        
-        if items:
-            return '\n' + '\n'.join(items)  # Start with newline, separate each item
-        return ''
-    
-    def process_mixed_content_with_lists(element):
-        """Process elements that contain both text and lists"""
-        result_parts = []
-        
-        for child in element.children:
-            if isinstance(child, NavigableString):
-                text = str(child).strip()
-                if text:
-                    result_parts.append(text)
-            elif isinstance(child, Tag):
-                if child.name in ['ul', 'ol']:
-                    list_content = process_list_element(child)
-                    result_parts.append(list_content)
-                else:
-                    child_text = child.get_text(strip=True)
-                    if child_text:
-                        result_parts.append(child_text)
-        
-        return ' '.join(result_parts)
     
     def process_right_column_parsed(right_column):
         """Process RightColumn content"""
@@ -1797,13 +1832,18 @@ try:
     if '<ProductOverview' in mdxContents:
         mdxContents = resolve_product_overview(mdxContents)
 
+    # Process document header and add title
+    mdxContents = resolve_header(mdxContents)
+
+    # NEW: Process standalone ParameterList components BEFORE RestAPILayout
+    # This ensures both standalone and nested ParameterList components are handled
+    if '<ParameterList' in mdxContents:
+        mdxContents = resolve_parameter_list(mdxContents)
+
     # Check for RestAPILayout component and handle specially
     if '<RestAPILayout' in mdxContents:
         print("RestAPILayout component detected - using specialized conversion")
         mdxContents = resolve_rest_api_layout(mdxContents)
-
-    # Process document header and add title
-    mdxContents = resolve_header(mdxContents)
 
     # Resolve Tabs components to markdown
     mdxContents = resolve_tabs(mdxContents)
