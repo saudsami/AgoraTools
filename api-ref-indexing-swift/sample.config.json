@@ -1,0 +1,10 @@
+{
+  "algolia_app_id": "YOUR_APP_ID",
+  "algolia_admin_api_key": "YOUR_ADMIN_API_KEY",
+  "index_name": "agora_swift_api_ref",
+  "doccarchive_data_path": "path-to\\data\\documentation",
+  "base_url": "https://api-ref.agora.io/en/video-sdk/ios/4.x/documentation",
+  "product": "video-calling",
+  "platform": "ios",
+  "version": "4.x"
+}
