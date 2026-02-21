@@ -1,5 +1,6 @@
 import json
 import os
+from urllib.parse import quote
 from algoliasearch.search_client import SearchClient
 
 # Load config
@@ -45,6 +46,12 @@ def extract_parent(hierarchy):
     return parent_identifier.split("/")[-1]
 
 
+def build_url(base_url, url_path):
+    # Encode only the path segment, preserving slashes
+    encoded_path = quote(url_path, safe="/")
+    return f"{base_url}{encoded_path}"
+
+
 def process_file(filepath):
     with open(filepath, "r", encoding="utf-8") as f:
         try:
@@ -76,7 +83,7 @@ def process_file(filepath):
         "declaration": extract_declaration(data.get("primaryContentSections", [])),
         "parent": extract_parent(data.get("hierarchy", {})),
         "module": metadata.get("modules", [{}])[0].get("name", ""),
-        "url": f"{BASE_URL}{url_path}",
+        "url": build_url(BASE_URL, url_path),
         "product": PRODUCT,
         "platform": PLATFORM,
         "version": VERSION,
