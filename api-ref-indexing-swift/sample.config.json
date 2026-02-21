@@ -2,9 +2,20 @@
   "algolia_app_id": "YOUR_APP_ID",
   "algolia_admin_api_key": "YOUR_ADMIN_API_KEY",
   "index_name": "agora_swift_api_ref",
-  "doccarchive_data_path": "path-to\\data\\documentation",
-  "base_url": "https://api-ref.agora.io/en/video-sdk/ios/4.x/documentation",
-  "product": "video-calling",
-  "platform": "ios",
-  "version": "4.x"
-}
+  "archives": [
+    {
+      "doccarchive_data_path": "\\\\wsl.localhost\\Ubuntu\\home\\saud\\API-Reference\\video-sdk\\ios\\4.x\\data\\documentation",
+      "base_url": "https://api-ref.agora.io/en/video-sdk/ios/4.x",
+      "product": "video-calling",
+      "platform": "ios",
+      "version": "4.x"
+    },
+    {
+      "doccarchive_data_path": "\\\\wsl.localhost\\Ubuntu\\home\\saud\\API-Reference\\video-sdk\\macos\\4.x\\data\\documentation",
+      "base_url": "https://api-ref.agora.io/en/video-sdk/macos/4.x",
+      "product": "video-calling",
+      "platform": "macos",
+      "version": "4.x"
+    }
+  ]
+} 

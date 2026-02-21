@@ -7,11 +7,6 @@ from algoliasearch.search_client import SearchClient
 with open("config.json", "r") as f:
     config = json.load(f)
 
-DOCCARCHIVE_DATA_PATH = config["doccarchive_data_path"]
-BASE_URL = config["base_url"]
-PRODUCT = config["product"]
-PLATFORM = config["platform"]
-VERSION = config["version"]
 INDEX_NAME = config["index_name"]
 ALGOLIA_APP_ID = config["algolia_app_id"]
 ALGOLIA_ADMIN_API_KEY = config["algolia_admin_api_key"]
@@ -52,7 +47,7 @@ def build_url(base_url, url_path):
     return f"{base_url}{encoded_path}"
 
 
-def process_file(filepath):
+def process_file(filepath, base_url, product, platform, version):
     with open(filepath, "r", encoding="utf-8") as f:
         try:
             data = json.load(f)
@@ -75,7 +70,7 @@ def process_file(filepath):
         return None
 
     record = {
-        "objectID": url_path.lstrip("/"),
+        "objectID": f"{platform}/{url_path.lstrip('/')}",
         "title": metadata.get("title", ""),
         "symbol_kind": metadata.get("symbolKind", ""),
         "role_heading": metadata.get("roleHeading", ""),
@@ -83,10 +78,10 @@ def process_file(filepath):
         "declaration": extract_declaration(data.get("primaryContentSections", [])),
         "parent": extract_parent(data.get("hierarchy", {})),
         "module": metadata.get("modules", [{}])[0].get("name", ""),
-        "url": build_url(BASE_URL, url_path),
-        "product": PRODUCT,
-        "platform": PLATFORM,
-        "version": VERSION,
+        "url": build_url(base_url, url_path),
+        "product": product,
+        "platform": platform,
+        "version": version,
     }
 
     return record
@@ -96,18 +91,31 @@ def main():
     records = []
     skipped = 0
 
-    for root, dirs, files in os.walk(DOCCARCHIVE_DATA_PATH):
-        for filename in files:
-            if not filename.endswith(".json"):
-                continue
-            filepath = os.path.join(root, filename)
-            record = process_file(filepath)
-            if record:
-                records.append(record)
-            else:
-                skipped += 1
+    for archive in config["archives"]:
+        doccarchive_data_path = archive["doccarchive_data_path"]
+        base_url = archive["base_url"]
+        product = archive["product"]
+        platform = archive["platform"]
+        version = archive["version"]
 
-    print(f"Extracted {len(records)} records, skipped {skipped} files")
+        print(f"Processing {platform} {product} {version}...")
+        archive_count = 0
+
+        for root, dirs, files in os.walk(doccarchive_data_path):
+            for filename in files:
+                if not filename.endswith(".json"):
+                    continue
+                filepath = os.path.join(root, filename)
+                record = process_file(filepath, base_url, product, platform, version)
+                if record:
+                    records.append(record)
+                    archive_count += 1
+                else:
+                    skipped += 1
+
+        print(f"  -> {archive_count} records extracted")
+
+    print(f"\nTotal: {len(records)} records extracted, {skipped} files skipped")
 
     # Upload to Algolia
     client = SearchClient.create(ALGOLIA_APP_ID, ALGOLIA_ADMIN_API_KEY)
@@ -133,7 +141,6 @@ def main():
         "camelCaseAttributes": ["title", "declaration"],
     })
 
-    # Upload in batches
     index.replace_all_objects(records)
     print(f"Uploaded {len(records)} records to index '{INDEX_NAME}'")
 
