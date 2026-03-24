@@ -1,3 +1,5 @@
+# Updating DocsBot.ai with updates to Agora documentation
+
 Follow these steps to update the markdown docs periodically and upload the files to DocsBot AI:
 
 1.  Delete the `mdx2md/output` and `mdx2md/output-indexed` folders
@@ -41,3 +43,5 @@ Follow these steps to update the markdown docs periodically and upload the files
     1. Paste the Product Overview page URL for the **Source URL**
     1. Use the product name as the **Source title**
     1. Click **Add source**
+
+1. Update `file_mappings.json` in https://github.com/AgoraIO/Docs. Copy the file from the `output-indexed` folder to the `data` folder of the repo. This file is used to map the markdown files in the zip to the html document using the id of the file in the filename.
