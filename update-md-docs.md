@@ -1,10 +1,11 @@
 Follow these steps to update the markdown docs periodically and upload the files to DocsBot AI:
 
-1.  Delete the `output` and `output-indexed` folders
+1.  Delete the `mdx2md/output` and `mdx2md/output-indexed` folders
 
 1. Export the docs to markdown
 
     ```bash
+    cd mdx2md
     python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs
     ```
 
@@ -29,7 +30,6 @@ Follow these steps to update the markdown docs periodically and upload the files
 1. Zip markdown document folders for upload to DocsBot.
 
     ```bash
-    cd mdx2md
     ./zip_folders.ps1 
     ```
 
