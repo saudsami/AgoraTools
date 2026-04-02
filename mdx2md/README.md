@@ -46,8 +46,15 @@ python bulk_export.py --docs-folder <path> [options]
 
 ### Basic Usage
 Convert all documentation:
+
 ```bash
-python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs
+python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs 
+```
+
+Export a specific folder:
+
+```bash
+python bulk_export.py --docs-folder D:/Git/AgoraDocs/Docs --start-folder real-time-stt
 ```
 
 ### Process Specific Product

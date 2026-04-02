@@ -71,6 +71,27 @@ if product is None:
 
 # ----- Helper functions -------
 
+def normalize_wrapper_attributes(text):
+    """
+    Normalize JSX array syntax in PlatformWrapper and ProductWrapper attributes
+    to simple quoted strings before processing.
+    
+    Converts:
+        platform={["ios","macos"]}  ->  platform="ios,macos"
+        platform={['ios','macos']}  ->  platform="ios,macos"
+        notAllowed={["web"]}        ->  notAllowed="web"
+    """
+    def strip_array_syntax(match):
+        attr_name = match.group(1)
+        values = match.group(2)
+        # Remove all inner quotes and whitespace, then rejoin with comma
+        cleaned = re.sub(r'[\'"\s]', '', values)
+        return f'{attr_name}="{cleaned}"'
+    
+    # Match platform={[...]} or notAllowed={[...]} with any quote style inside
+    pattern = re.compile(r'(platform|notAllowed)=\{?\[([^\]]+)\]\}?')
+    return pattern.sub(strip_array_syntax, text)
+
 # Functions to recursively resolve variables in global.js to create a dictionary
 def read_variables(file_path):
     variables = {}
@@ -821,6 +842,8 @@ def resolve_all_platform_tags(text, platform):
     Properly handles nested PlatformWrapper tags.
     """
     
+    text = normalize_wrapper_attributes(text)
+
     # Keep processing until no more PlatformWrapper tags are found
     max_iterations = 100  # Prevent infinite loops
     iteration = 0
@@ -905,6 +928,8 @@ def resolve_all_product_tags(text, product):
     This handles both standard and notAllowed attributes.
     Properly handles nested ProductWrapper tags.
     """
+    
+    text = normalize_wrapper_attributes(text)
     
     # Keep processing until no more ProductWrapper tags are found
     max_iterations = 100  # Prevent infinite loops
