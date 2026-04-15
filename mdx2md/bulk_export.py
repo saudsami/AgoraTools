@@ -108,11 +108,13 @@ def create_platform_index_file(mdx_file, platforms, output_dir, base_name, docs_
         title = fm.get('title', 'Documentation')
         description = fm.get('description', '')
         sidebar_position = fm.get('sidebar_position')
-        
+
+        exported_from = get_exported_from_url(mdx_file, docs_folder, is_help=False)
+
         index_frontmatter = {
             'title': title,
             'platform_selector': False,
-            'exported_from': get_exported_from_url(mdx_file, docs_folder, is_help=False),
+            'exported_from': exported_from,
             'exported_on': datetime.utcnow().isoformat() + 'Z',
             'exported_file': f'{base_name}.md'
         }
@@ -123,10 +125,21 @@ def create_platform_index_file(mdx_file, platforms, output_dir, base_name, docs_
             index_frontmatter['sidebar_position'] = sidebar_position
         
         frontmatter_yaml = yaml.safe_dump(index_frontmatter, sort_keys=False).strip()
-        
+
+        # Build AI navigation directive
+        path_after_en = exported_from.split("/en/", 1)[-1]
+        product_slug = path_after_en.split("/")[0]
+        directive = (
+            f"> For a complete site index fetch https://docs.agora.io/llms.txt."
+            f" For all pages in this product fetch"
+            f" https://docs.agora.io/en/{product_slug}/overview/product-overview.md"
+        )
+
         index_content = f"""---
 {frontmatter_yaml}
 ---
+
+{directive}
 
 # {title}
 
