@@ -1599,7 +1599,7 @@ def resolve_codeblocks(text):
         code_content = code_content.replace('\\"', '"')
         code_content = code_content.replace("\\'", "'")
         code_content = code_content.replace('\\`', '`')
-        code_content = code_content.replace('\{', '{')
+        code_content = code_content.replace('\\{', '{')
 
         # Apply base indentation to each line while preserving internal indentation
         lines = code_content.split('\n')
@@ -2029,6 +2029,8 @@ try:
         # Remove .mdx extension if present
         if relative_path.endswith('.mdx'):
             relative_path = relative_path[:-4]
+        elif relative_path.endswith('.md'):
+            relative_path = relative_path[:-3]
         
         exported_from = f"https://docs.agora.io/en/{relative_path}"
         if platform and platform_selector and has_platforms:
