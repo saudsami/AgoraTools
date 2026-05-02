@@ -2,3 +2,4 @@ output*/
 .vscode/
 temp/
 config.json
+__pycache__/
