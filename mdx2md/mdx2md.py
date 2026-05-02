@@ -1315,6 +1315,88 @@ def resolve_header(content):
 
     return content[:fm_match.end()] + body if fm_match else body
 
+def resolve_recipes(text):
+    """
+    Convert Recipes components to a markdown list.
+    Format: * [title](link): description
+    Internal links are resolved to full https://docs.agora.io/en/ URLs.
+    """
+    if '<Recipes' not in text:
+        return text
+    
+    recipes_pattern = re.compile(
+        r'<Recipes\s*([\s\S]*?)>\s*</Recipes>',
+        re.MULTILINE | re.DOTALL
+    )
+
+    def process_recipes(match):
+        attributes_str = match.group(1)
+        result_parts = []
+
+        # Extract optional description attribute
+        desc_match = re.search(r'description\s*=\s*["\']([^"\']+)["\']', attributes_str)
+        if desc_match:
+            result_parts.append(desc_match.group(1))
+            result_parts.append('')
+
+        # Extract recipes array using bracket-depth tracking
+        recipes_start = re.search(r'recipes\s*=\s*\{?\[', attributes_str)
+        if not recipes_start:
+            return match.group(0)
+
+        search_start = recipes_start.end()
+        depth = 1
+        i = search_start
+        while i < len(attributes_str) and depth > 0:
+            if attributes_str[i] == '[':
+                depth += 1
+            elif attributes_str[i] == ']':
+                depth -= 1
+            i += 1
+        recipes_str = attributes_str[search_start:i - 1]
+
+        # Extract individual { ... } recipe objects using brace tracking
+        recipe_objects = []
+        depth = 0
+        start = None
+        for i, ch in enumerate(recipes_str):
+            if ch == '{':
+                if depth == 0:
+                    start = i + 1
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0 and start is not None:
+                    recipe_objects.append(recipes_str[start:i])
+                    start = None
+
+        for obj in recipe_objects:
+            title_match = re.search(r'title\s*:\s*["\']([^"\']+)["\']', obj)
+            link_match = re.search(r'link\s*:\s*["\']([^"\']+)["\']', obj)
+            item_desc_match = re.search(r'description\s*:\s*["\']([^"\']+)["\']', obj)
+
+            if not title_match or not link_match:
+                continue
+
+            title = title_match.group(1)
+            link = link_match.group(1)
+            item_desc = item_desc_match.group(1) if item_desc_match else ''
+
+            # Resolve internal links to full URLs
+            if link.startswith('/en/'):
+                link = f"https://docs.agora.io{link}"
+            elif link.startswith('/') and not link.startswith('//'):
+                link = f"https://docs.agora.io/en{link}"
+
+            line = f"* [{title}]({link})"
+            if item_desc:
+                line += f": {item_desc}"
+            result_parts.append(line)
+
+        return '\n'.join(result_parts)
+
+    return recipes_pattern.sub(process_recipes, text)
+
 def resolve_tabs(text):
     """
     Convert Tabs and TabItem components to markdown format.
@@ -1975,6 +2057,9 @@ try:
     if '<RestAPILayout' in mdxContents:
         print("RestAPILayout component detected - using specialized conversion")
         mdxContents = resolve_rest_api_layout(mdxContents)
+
+    # Resolve Recipes components to markdown
+    mdxContents = resolve_recipes(mdxContents)
 
     # Resolve Tabs components to markdown
     mdxContents = resolve_tabs(mdxContents)
