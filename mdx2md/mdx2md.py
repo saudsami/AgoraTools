@@ -650,189 +650,285 @@ def resolve_product_overview(text):
     Convert ProductOverview components to structured markdown.
     Handles all component attributes and generates organized sections.
     """
-    
-    # Pattern to match the entire ProductOverview component
-    product_overview_pattern = re.compile(
-        r'<ProductOverview\s*([^>]*?)>(.*?)</ProductOverview>',
-        re.MULTILINE | re.DOTALL
-    )
-    
-    def process_product_overview(match):
-        attributes_str = match.group(1)
-        inner_content = match.group(2).strip()
-        
+
+    # Standard pattern fails when JSX fragments (<> ... </>) appear inside
+    # attributes because the [^>]*? stops at the first > inside a fragment.
+    # Instead we locate the component manually using tag depth tracking.
+
+    result_parts_outer = []
+    last_end = 0
+
+    # Find each <ProductOverview occurrence
+    for open_match in re.finditer(r'<ProductOverview\s*', text):
+        component_start = open_match.start()
+
+        # Walk forward from end of '<ProductOverview' to find where the
+        # opening tag ends — that is, the '>' that is NOT inside a JSX
+        # fragment or string literal.
+        # We track:
+        #   - paren depth  (for JSX expressions like description={( <> ... </> )} )
+        #   - brace depth  (for JS objects/arrays)
+        #   - whether we are inside a string
+        pos = open_match.end()
+        paren_depth = 0
+        brace_depth = 0
+        in_string = None  # None, '"', or "'"
+
+        opening_tag_end = None
+        while pos < len(text):
+            ch = text[pos]
+
+            if in_string:
+                if ch == in_string and text[pos - 1] != '\\':
+                    in_string = None
+            else:
+                if ch in ('"', "'"):
+                    in_string = ch
+                elif ch == '(':
+                    paren_depth += 1
+                elif ch == ')':
+                    paren_depth -= 1
+                elif ch == '{':
+                    brace_depth += 1
+                elif ch == '}':
+                    brace_depth -= 1
+                elif ch == '>' and paren_depth == 0 and brace_depth == 0:
+                    # This '>' closes the opening tag
+                    opening_tag_end = pos + 1
+                    break
+            pos += 1
+
+        if opening_tag_end is None:
+            continue
+
+        attributes_str = text[open_match.end():opening_tag_end - 1]
+
+        # Now find the matching </ProductOverview>
+        close_tag = '</ProductOverview>'
+        close_pos = text.find(close_tag, opening_tag_end)
+        if close_pos == -1:
+            continue
+
+        inner_content = text[opening_tag_end:close_pos].strip()
+        component_end = close_pos + len(close_tag)
+
+        # Preserve text before this component
+        result_parts_outer.append(text[last_end:component_start])
+        last_end = component_end
+
+        # ----------------------------------------------------------------
         # Extract attributes
+        # ----------------------------------------------------------------
         attributes = {}
-        
-        # Simple string attributes
-        simple_attrs = ['title', 'img', 'quickStartLink', 'uiQuickStartLink', 'uiSamplesQuickStartLink', 
-                       'fastboardQuickStartLink', 'apiReferenceLink', 'authenticationLink', 'samplesLink']
-        
+
+        simple_attrs = [
+            'title', 'img', 'quickStartLink', 'uiQuickStartLink',
+            'uiSamplesQuickStartLink', 'fastboardQuickStartLink',
+            'apiReferenceLink', 'authenticationLink', 'samplesLink'
+        ]
         for attr in simple_attrs:
-            pattern = f'{attr}\\s*=\\s*["\']([^"\']*)["\']'
-            match_attr = re.search(pattern, attributes_str)
-            if match_attr:
-                attributes[attr] = match_attr.group(1)
-        
-        # Extract productFeatures array (JavaScript object syntax)
-        features_match = re.search(r'productFeatures\s*=\s*\{?\[\s*(.*?)\s*\]\}?', attributes_str, re.DOTALL)
+            m = re.search(f'{attr}\\s*=\\s*["\']([^"\']*)["\']', attributes_str)
+            if m:
+                attributes[attr] = m.group(1)
+
+        # ----------------------------------------------------------------
+        # Extract productFeatures array
+        # ----------------------------------------------------------------
         features = []
-        
+        features_match = re.search(
+            r'productFeatures\s*=\s*\{?\[\s*(.*?)\s*\]\}?',
+            attributes_str, re.DOTALL
+        )
         if features_match:
             features_str = features_match.group(1)
-            # Split by objects (looking for closing brace followed by comma or end)
             feature_objects = re.findall(r'\{([^}]*)\}', features_str)
-            
+
             for feature_obj in feature_objects:
                 feature = {}
-                # Extract title
                 title_match = re.search(r'title:\s*["\']([^"\']*)["\']', feature_obj)
                 if title_match:
                     feature['title'] = title_match.group(1)
-                
-                # Extract content (handle multiline strings with +)
-                content_match = re.search(r'content:\s*"([^"]*(?:\s*\+\s*"[^"]*")*)"', feature_obj, re.DOTALL)
+
+                content_match = re.search(
+                    r'content:\s*"([^"]*(?:\s*\+\s*"[^"]*")*)"',
+                    feature_obj, re.DOTALL
+                )
                 if not content_match:
-                    # Try with single quotes
-                    content_match = re.search(r"content:\s*'([^']*(?:\s*\+\s*'[^']*')*)'", feature_obj, re.DOTALL)
-                
+                    content_match = re.search(
+                        r"content:\s*'([^']*(?:\s*\+\s*'[^']*')*)'",
+                        feature_obj, re.DOTALL
+                    )
                 if content_match:
                     content = content_match.group(1)
-                    # Clean up concatenated strings - handle both quote types
                     content = re.sub(r'"\s*\+\s*"', '', content)
                     content = re.sub(r"'\s*\+\s*'", '', content)
-                    # Remove any remaining quotes from concatenation
-                    content = re.sub(r'"\s*\+\s*\'', '', content)
-                    content = re.sub(r'\'\s*\+\s*"', '', content)
                     feature['content'] = content.strip()
-                
-                # Extract link
+
                 link_match = re.search(r'link:\s*["\']([^"\']*)["\']', feature_obj)
                 if link_match:
                     feature['link'] = link_match.group(1)
-                
-                if feature:  # Only add if we extracted something
+
+                if feature:
                     features.append(feature)
-        
+
+        # ----------------------------------------------------------------
+        # Extract linkButtons array using bracket-depth tracking
+        # Regex fails here because JSX fragments contain > and ) chars
+        # ----------------------------------------------------------------
+        link_buttons = []
+        lb_start_match = re.search(r'linkButtons\s*=\s*\{?\[', attributes_str)
+
+        if lb_start_match:
+            search_start = lb_start_match.end()
+            depth = 1
+            i = search_start
+            while i < len(attributes_str) and depth > 0:
+                if attributes_str[i] == '[':
+                    depth += 1
+                elif attributes_str[i] == ']':
+                    depth -= 1
+                i += 1
+            buttons_str = attributes_str[search_start:i - 1]
+
+            # Extract individual { ... } button objects using brace tracking
+            button_objects = []
+            depth = 0
+            start = None
+            for i, ch in enumerate(buttons_str):
+                if ch == '{':
+                    if depth == 0:
+                        start = i + 1
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        button_objects.append(buttons_str[start:i])
+                        start = None
+
+            for btn_obj in button_objects:
+                label_match = re.search(r'label:\s*["\']([^"\']+)["\']', btn_obj)
+                link_match = re.search(r'link:\s*["\']([^"\']*)["\']', btn_obj)
+                desc_match = re.search(r'<>\s*(.*?)\s*</>', btn_obj, re.DOTALL)
+
+                if label_match:
+                    label = label_match.group(1)
+                    link = link_match.group(1) if link_match else ''
+                    description = (
+                        ' '.join(desc_match.group(1).split()) if desc_match else ''
+                    )
+                    link_buttons.append({
+                        'label': label,
+                        'description': description,
+                        'link': link,
+                        'type': 'primary'
+                    })
+
+        # ----------------------------------------------------------------
         # Build markdown output
+        # ----------------------------------------------------------------
         result_parts = []
-        
-        # Add title as h1
+
         if attributes.get('title'):
             result_parts.append(f"# {attributes['title']}")
             result_parts.append('')
-        
-        # Add inner content (process it through existing functions)
+
+        # Inner content — resolve variables
         if inner_content:
-            # Process variables in inner content
             processed_content = inner_content
-            
-            # Replace global variables
             global_pattern = r'<Vg\s+k\s*=\s*"(\w+)"\s*\/?>'
-            processed_content = re.sub(global_pattern, lambda m: globalVariables.get(m.group(1), m.group(0)), processed_content)
-            
-            # Replace product and platform variables
-            processed_content = resolve_local_variables(processed_content, product, productDict, platform, platformDict)
-            
+            processed_content = re.sub(
+                global_pattern,
+                lambda m: globalVariables.get(m.group(1), m.group(0)),
+                processed_content
+            )
+            processed_content = resolve_local_variables(
+                processed_content, product, productDict, platform, platformDict
+            )
             result_parts.append(processed_content)
             result_parts.append('')
-        
-        # Build "Start building with" section
-        buttons = []
-        
-        # Primary buttons (large ones)
-        if attributes.get('quickStartLink'):
-            buttons.append({
-                'label': 'SDK quickstart',
-                'link': attributes['quickStartLink'],
-                'description': 'Customize your experience from the start with our flexible Video SDK.',
-                'type': 'primary'
-            })
-        
-        if attributes.get('uiQuickStartLink'):
-            buttons.append({
-                'label': 'UI Kit quickstart', 
-                'link': attributes['uiQuickStartLink'],
-                'description': 'Start with a pre-built video UI and video calling logic - customize as you go.',
-                'type': 'primary'
-            })
-        
-        # Secondary buttons (compact ones)
-        if attributes.get('authenticationLink'):
-            buttons.append({
-                'label': 'Authentication',
-                'link': attributes['authenticationLink'],
-                'type': 'secondary'
-            })
-        
-        if attributes.get('apiReferenceLink'):
-            buttons.append({
-                'label': 'API reference',
-                'link': attributes['apiReferenceLink'],
-                'type': 'secondary'
-            })
-        
-        if attributes.get('samplesLink'):
-            buttons.append({
-                'label': 'Samples',
-                'link': attributes['samplesLink'],
-                'type': 'secondary'
-            })
-        
-        # Add buttons section if we have any
+
+        # Buttons — prefer linkButtons, fall back to string attributes
+        if link_buttons:
+            buttons = link_buttons
+        else:
+            buttons = []
+            if attributes.get('quickStartLink'):
+                buttons.append({
+                    'label': 'SDK quickstart',
+                    'link': attributes['quickStartLink'],
+                    'description': 'Customize your experience from the start with our flexible Video SDK.',
+                    'type': 'primary'
+                })
+            if attributes.get('uiQuickStartLink'):
+                buttons.append({
+                    'label': 'UI Kit quickstart',
+                    'link': attributes['uiQuickStartLink'],
+                    'description': 'Start with a pre-built video UI and video calling logic - customize as you go.',
+                    'type': 'primary'
+                })
+            if attributes.get('authenticationLink'):
+                buttons.append({
+                    'label': 'Authentication',
+                    'link': attributes['authenticationLink'],
+                    'type': 'secondary'
+                })
+            if attributes.get('apiReferenceLink'):
+                buttons.append({
+                    'label': 'API reference',
+                    'link': attributes['apiReferenceLink'],
+                    'type': 'secondary'
+                })
+            if attributes.get('samplesLink'):
+                buttons.append({
+                    'label': 'Samples',
+                    'link': attributes['samplesLink'],
+                    'type': 'secondary'
+                })
+
         if buttons:
             result_parts.append('## Start building with')
             result_parts.append('')
-            
             for button in buttons:
-                # Resolve relative links to full URLs
                 link = button['link']
                 if link.startswith('/') and not link.startswith('http'):
-                    # Convert relative link to full URL
-                    link = f"{siteBaseUrl}{link}"
-                
-                if button['type'] == 'primary' and button.get('description'):
-                    result_parts.append(f"- [{button['label']}]({link}) - {button['description']}")
+                    # linkButtons use relative paths without .md extension —
+                    # resolve to docs.agora.io and append .md
+                    if not link.endswith('.md'):
+                        link = f"https://docs.agora.io/en{link}.md"
+                    else:
+                        link = f"https://docs.agora.io/en{link}"
+                if button.get('description'):
+                    result_parts.append(
+                        f"- [{button['label']}]({link}) - {button['description']}"
+                    )
                 else:
                     result_parts.append(f"- [{button['label']}]({link})")
-            
             result_parts.append('')
-        
-        # Add product features section
+
         if features:
             result_parts.append('## Product Features')
             result_parts.append('')
-            
             for feature in features:
                 if feature.get('title'):
                     if feature.get('link'):
-                        # Resolve relative links to full URLs and fix double /en/
                         link = feature['link']
                         if link.startswith('/en/'):
-                            # Already has /en/, just add base URL
                             link = f"{siteBaseUrl}{link}"
                         elif link.startswith('/') and not link.startswith('http'):
-                            # Add /en/ prefix
                             link = f"{siteBaseUrl}/en{link}"
-                        
-                        # Make the title a link
                         feature_line = f"- [**{feature['title']}**]({link})"
                     else:
                         feature_line = f"- **{feature['title']}**"
-                    
                     if feature.get('content'):
                         feature_line += f" - {feature['content']}"
-                    
                     result_parts.append(feature_line)
-            
             result_parts.append('')
-        
-        return '\n'.join(result_parts).rstrip()
-    
-    # Process all ProductOverview components
-    text = product_overview_pattern.sub(process_product_overview, text)
-    
-    return text
+
+        result_parts_outer.append('\n'.join(result_parts).rstrip())
+
+    # Append any text after the last component
+    result_parts_outer.append(text[last_end:])
+    return ''.join(result_parts_outer)
 
 # New comprehensive platform tag resolver
 def resolve_all_platform_tags(text, platform):
@@ -1219,6 +1315,88 @@ def resolve_header(content):
 
     return content[:fm_match.end()] + body if fm_match else body
 
+def resolve_recipes(text):
+    """
+    Convert Recipes components to a markdown list.
+    Format: * [title](link): description
+    Internal links are resolved to full https://docs.agora.io/en/ URLs.
+    """
+    if '<Recipes' not in text:
+        return text
+    
+    recipes_pattern = re.compile(
+        r'<Recipes\s*([\s\S]*?)>\s*</Recipes>',
+        re.MULTILINE | re.DOTALL
+    )
+
+    def process_recipes(match):
+        attributes_str = match.group(1)
+        result_parts = []
+
+        # Extract optional description attribute
+        desc_match = re.search(r'description\s*=\s*["\']([^"\']+)["\']', attributes_str)
+        if desc_match:
+            result_parts.append(desc_match.group(1))
+            result_parts.append('')
+
+        # Extract recipes array using bracket-depth tracking
+        recipes_start = re.search(r'recipes\s*=\s*\{?\[', attributes_str)
+        if not recipes_start:
+            return match.group(0)
+
+        search_start = recipes_start.end()
+        depth = 1
+        i = search_start
+        while i < len(attributes_str) and depth > 0:
+            if attributes_str[i] == '[':
+                depth += 1
+            elif attributes_str[i] == ']':
+                depth -= 1
+            i += 1
+        recipes_str = attributes_str[search_start:i - 1]
+
+        # Extract individual { ... } recipe objects using brace tracking
+        recipe_objects = []
+        depth = 0
+        start = None
+        for i, ch in enumerate(recipes_str):
+            if ch == '{':
+                if depth == 0:
+                    start = i + 1
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0 and start is not None:
+                    recipe_objects.append(recipes_str[start:i])
+                    start = None
+
+        for obj in recipe_objects:
+            title_match = re.search(r'title\s*:\s*["\']([^"\']+)["\']', obj)
+            link_match = re.search(r'link\s*:\s*["\']([^"\']+)["\']', obj)
+            item_desc_match = re.search(r'description\s*:\s*["\']([^"\']+)["\']', obj)
+
+            if not title_match or not link_match:
+                continue
+
+            title = title_match.group(1)
+            link = link_match.group(1)
+            item_desc = item_desc_match.group(1) if item_desc_match else ''
+
+            # Resolve internal links to full URLs
+            if link.startswith('/en/'):
+                link = f"https://docs.agora.io{link}"
+            elif link.startswith('/') and not link.startswith('//'):
+                link = f"https://docs.agora.io/en{link}"
+
+            line = f"* [{title}]({link})"
+            if item_desc:
+                line += f": {item_desc}"
+            result_parts.append(line)
+
+        return '\n'.join(result_parts)
+
+    return recipes_pattern.sub(process_recipes, text)
+
 def resolve_tabs(text):
     """
     Convert Tabs and TabItem components to markdown format.
@@ -1503,7 +1681,7 @@ def resolve_codeblocks(text):
         code_content = code_content.replace('\\"', '"')
         code_content = code_content.replace("\\'", "'")
         code_content = code_content.replace('\\`', '`')
-        code_content = code_content.replace('\{', '{')
+        code_content = code_content.replace('\\{', '{')
 
         # Apply base indentation to each line while preserving internal indentation
         lines = code_content.split('\n')
@@ -1746,14 +1924,24 @@ def add_frontmatter(content, source_file, platform="flutter", exported_from=None
 
     new_frontmatter = "---\n" + yaml.safe_dump(new_fm, sort_keys=False).strip() + "\n---\n\n"
     
+    # Build the AI navigation directive
+    directive = "> For a complete site index fetch https://docs.agora.io/llms.txt."
+    if exported_from and "/en/help/" not in exported_from:
+        # Extract product slug from the exported_from URL
+        # e.g. https://docs.agora.io/en/conversational-ai/overview/... -> conversational-ai
+        path_after_en = exported_from.split("/en/", 1)[-1]
+        product_slug = path_after_en.split("/")[0]
+        if product_slug:
+            overview_url = f"https://docs.agora.io/en/{product_slug}/overview/product-overview.md"
+            directive += f" For all pages in this product fetch {overview_url}"
+    
     # Add HTML version link if exported_from is available
     html_version_link = ""
     if exported_from:
-        # Strip .md or .mdx extension from the URL for HTML version
         clean_url = re.sub(r'\.(mdx?|md)$', '', exported_from)
         html_version_link = f"[HTML Version]({clean_url})\n\n"
-    
-    return new_frontmatter + html_version_link + body
+
+    return new_frontmatter + directive + "\n\n" + html_version_link + body
 
 def cleanup_html_tags(text):
     """
@@ -1870,6 +2058,9 @@ try:
         print("RestAPILayout component detected - using specialized conversion")
         mdxContents = resolve_rest_api_layout(mdxContents)
 
+    # Resolve Recipes components to markdown
+    mdxContents = resolve_recipes(mdxContents)
+
     # Resolve Tabs components to markdown
     mdxContents = resolve_tabs(mdxContents)
     
@@ -1923,6 +2114,8 @@ try:
         # Remove .mdx extension if present
         if relative_path.endswith('.mdx'):
             relative_path = relative_path[:-4]
+        elif relative_path.endswith('.md'):
+            relative_path = relative_path[:-3]
         
         exported_from = f"https://docs.agora.io/en/{relative_path}"
         if platform and platform_selector and has_platforms:
